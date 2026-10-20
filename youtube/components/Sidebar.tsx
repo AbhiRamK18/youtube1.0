@@ -10,7 +10,7 @@ import {
 import Link from "next/link";
 import React, { useState } from "react";
 import { Button } from "./ui/button";
-import Channeldialogue from "./channeldialogue";
+import Channeldialogue from "./channeldialog";
 import { useUser } from "@/lib/AuthContext";
 
 const Sidebar = () => {

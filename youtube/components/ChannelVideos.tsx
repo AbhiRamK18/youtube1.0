@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import VideoCard from "./videocard";
 
 export default function ChannelVideos({ videos }: any) {

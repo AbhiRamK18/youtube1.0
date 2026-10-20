@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Button } from "./ui/button";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 const ChannelHeader = ({ channel, user }: any) => {
   const [isSubscribed, setIsSubscribed] = useState(false);
   return (
