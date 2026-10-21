@@ -1,3 +1,4 @@
+"use client";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { useState } from "react";
 import { createContext } from "react";

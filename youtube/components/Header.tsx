@@ -1,3 +1,4 @@
+"use client";
 import { Bell, Menu, Mic, Search, User, VideoIcon } from "lucide-react";
 import React, { useState } from "react";
 import { Button } from "./ui/button";
@@ -12,7 +13,7 @@ import {
 } from "./ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import Channeldialogue from "./channeldialogue";
-import { useRouter } from "next/router";
+import { useRouter } from "next/navigation";
 import { useUser } from "@/lib/AuthContext";
 
 const Header = () => {
@@ -87,21 +88,25 @@ const Header = () => {
               <Bell className="w-6 h-6" />
             </Button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
+              <DropdownMenuTrigger
+                render={
+                  <Button
                   variant="ghost"
                   className="relative h-8 w-8 rounded-full"
-                >
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src={user.image} />
-                    <AvatarFallback>{user.name?.[0] || "U"}</AvatarFallback>
-                  </Avatar>
-                </Button>
+                  />
+                }
+              >
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={user.image} />
+                  <AvatarFallback>{user.name?.[0] || "U"}</AvatarFallback>
+                </Avatar>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-56" align="end" forceMount>
+              <DropdownMenuContent className="w-56" align="end">
                 {user?.channelname ? (
-                  <DropdownMenuItem asChild>
-                    <Link href={`/channel/${user?._id}`}>Your channel</Link>
+                  <DropdownMenuItem
+                    render={<Link href={`/channel/${user?._id}`} />}
+                  >
+                    Your channel
                   </DropdownMenuItem>
                 ) : (
                   <div className="px-2 py-1.5">
@@ -115,14 +120,14 @@ const Header = () => {
                     </Button>
                   </div>
                 )}
-                <DropdownMenuItem asChild>
-                  <Link href="/history">History</Link>
+                <DropdownMenuItem render={<Link href="/history" />}>
+                  History
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/liked">Liked videos</Link>
+                <DropdownMenuItem render={<Link href="/liked" />}>
+                  Liked videos
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/watch-later">Watch later</Link>
+                <DropdownMenuItem render={<Link href="/watch-later" />}>
+                  Watch later
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={logout}>Sign out</DropdownMenuItem>

@@ -118,15 +118,17 @@ export default function LikedVideosContent() {
             </div>
 
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
+              <DropdownMenuTrigger
+                render={
+                  <Button
                   variant="ghost"
                   size="icon"
                   className="opacity-0 group-hover:opacity-100"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </Button>
-              </DropdownMenuTrigger>
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                }
+              />
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   onClick={() => handleUnlikeVideo(item.videoid._id, item._id)}

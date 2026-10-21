@@ -1,3 +1,4 @@
+"use client";
 import {
   Home,
   Compass,
@@ -10,7 +11,7 @@ import {
 import Link from "next/link";
 import React, { useState } from "react";
 import { Button } from "./ui/button";
-import Channeldialogue from "./channeldialog";
+import Channeldialogue from "./channeldialogue";
 import { useUser } from "@/lib/AuthContext";
 
 const Sidebar = () => {

@@ -1,3 +1,4 @@
+"use client";
 import { Check, FileVideo, Upload, X } from "lucide-react";
 import React, { ChangeEvent, useRef, useState } from "react";
 import { toast } from "sonner";
