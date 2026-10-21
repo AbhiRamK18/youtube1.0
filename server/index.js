@@ -17,7 +17,7 @@ app.use(express.json({ limit: "30mb", extended: true }));
 app.use(express.urlencoded({ limit: "30mb", extended: true }));
 app.use("/uploads", express.static(path.join("uploads")));
 app.get("/", (req, res) => {
-  res.send("You tube backend is working");
+  res.send("You tube backend is working and connected to mongodb");
 });
 app.use(bodyParser.json());
 app.use("/user", userroutes);
