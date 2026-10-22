@@ -54,25 +54,28 @@ const VideoUploader = ({ channelId, channelName }: any) => {
       toast.error("Please provide file and title");
       return;
     }
+    if (!channelId || !channelName) {
+      toast.error("Create a channel before uploading a video.");
+      return;
+    }
+
     const formdata = new FormData();
     formdata.append("file", videoFile);
     formdata.append("videotitle", videoTitle);
     formdata.append("videochanel", channelName);
     formdata.append("uploader", channelId);
-    console.log(formdata)
     try {
       setIsUploading(true);
       setUploadProgress(0);
       const res = await axiosInstance.post("/video/upload", formdata, {
-         headers: {
-    "Content-Type": "multipart/form-data", // ✅ MUST for FormData
-  },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onUploadProgress: (progresEvent: any) => {
-          const progress = Math.round(
-            (progresEvent.loaded * 100) / progresEvent.total
-          );
-          setUploadProgress(progress);
+          if (progresEvent.total) {
+            const progress = Math.round(
+              (progresEvent.loaded * 100) / progresEvent.total
+            );
+            setUploadProgress(progress);
+          }
         },
       });
       toast.success("Upload successfully");
@@ -102,7 +105,7 @@ const VideoUploader = ({ channelId, channelName }: any) => {
               or click to select files
             </p>
             <p className="text-xs text-gray-400 mt-4">
-              MP4, WebM, MOV or AVI • Up to 100MB
+              Video files • Up to 100MB
             </p>
             <input
               type="file"

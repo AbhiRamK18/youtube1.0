@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import axiosInstance from "@/lib/axiosinstance";
 import { useUser } from "@/lib/AuthContext";
+import { getVideoUrl } from "@/lib/videoUrl";
 
 export default function HistoryContent() {
   const [history, setHistory] = useState<any[]>([]);
@@ -77,7 +78,6 @@ export default function HistoryContent() {
       </div>
     );
   }
-  const videos = "/video/vdo.mp4";
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -90,8 +90,11 @@ export default function HistoryContent() {
             <Link href={`/watch/${item.videoid._id}`} className="flex-shrink-0">
               <div className="relative w-40 aspect-video bg-gray-100 rounded overflow-hidden">
                 <video
-                  src={`${process.env.BACKEND_URL}/${item.videoid?.filepath}`}
-                  className="object-cover group-hover:scale-105 transition-transform duration-200"
+                  src={getVideoUrl(item.videoid?.filepath)}
+                  className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
+                  muted
+                  playsInline
+                  preload="metadata"
                 />
               </div>
             </Link>

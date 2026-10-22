@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState,useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
@@ -13,6 +13,13 @@ interface Comment {
   commentbody: string;
   usercommented: string;
   commentedon: string;
+
+  likes?: number;
+  avatar?: string;
+  image?: string;
+  location?: string;
+  updatedAt?: string;
+  editedAt?: string;
 }
 const Comments = ({ videoId }: any) => {
   const [comments, setComments] = useState<Comment[]>([]);
@@ -22,6 +29,9 @@ const Comments = ({ videoId }: any) => {
   const [editText, setEditText] = useState("");
   const { user } = useUser();
   const [loading, setLoading] = useState(true);
+  const [sortBy, setSortBy] = useState<
+  "relevant" | "newest" | "oldest" | "mostLiked"
+  >("relevant");
   const fetchedComments = [
     {
       _id: "1",
@@ -54,6 +64,41 @@ const Comments = ({ videoId }: any) => {
       setLoading(false);
     }
   };
+
+  const sortedComments = useMemo(() => {
+  const result = [...comments];
+
+  switch (sortBy) {
+    case "newest":
+      return result.sort(
+        (a, b) =>
+          new Date(b.commentedon).getTime() -
+          new Date(a.commentedon).getTime()
+      );
+
+    case "oldest":
+      return result.sort(
+        (a, b) =>
+          new Date(a.commentedon).getTime() -
+          new Date(b.commentedon).getTime()
+      );
+
+    case "mostLiked":
+      return result.sort(
+        (a, b) => (b.likes ?? 0) - (a.likes ?? 0)
+      );
+
+    case "relevant":
+    default:
+      // Until relevance scoring is implemented, show newest first.
+      return result.sort(
+        (a, b) =>
+          new Date(b.commentedon).getTime() -
+          new Date(a.commentedon).getTime()
+      );
+  }
+}, [comments, sortBy]);
+
   if (loading) {
     return <div>Loading history...</div>;
   }
@@ -77,7 +122,17 @@ const Comments = ({ videoId }: any) => {
           usercommented: user.name || "Anonymous",
           commentedon: new Date().toISOString(),
         };
-        setComments([newCommentObj, ...comments]);
+        setComments((prev) =>
+  prev.map((c) =>
+    c._id === editingCommentId
+      ? {
+          ...c,
+          commentbody: editText.trim(),
+          updatedAt: new Date().toISOString(),
+        }
+      : c
+  )
+);
       }
       setNewComment("");
     } catch (error) {
@@ -125,7 +180,31 @@ const Comments = ({ videoId }: any) => {
   };
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold">{comments.length} Comments</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+  <h2 className="text-xl font-semibold">
+    {comments.length} Comments
+  </h2>
+
+  <select
+    value={sortBy}
+    onChange={(e) =>
+      setSortBy(
+        e.target.value as
+          | "relevant"
+          | "newest"
+          | "oldest"
+          | "mostLiked"
+      )
+    }
+    aria-label="Sort comments"
+    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-gray-400"
+  >
+    <option value="relevant">Relevant</option>
+    <option value="newest">Newest</option>
+    <option value="oldest">Oldest</option>
+    <option value="mostLiked">Most liked</option>
+  </select>
+</div>
 
       {user && (
         <div className="flex gap-4">
@@ -164,10 +243,10 @@ const Comments = ({ videoId }: any) => {
             No comments yet. Be the first to comment!
           </p>
         ) : (
-          comments.map((comment) => (
+          sortedComments.map((comment) => (
             <div key={comment._id} className="flex gap-4">
               <Avatar className="w-10 h-10">
-                <AvatarImage src="/placeholder.svg?height=40&width=40" />
+                <AvatarImage src={comment.avatar || comment.image || ""} />
                 <AvatarFallback>{comment.usercommented[0]}</AvatarFallback>
               </Avatar>
               <div className="flex-1">
@@ -176,8 +255,15 @@ const Comments = ({ videoId }: any) => {
                     {comment.usercommented}
                   </span>
                   <span className="text-xs text-gray-600">
-                    {formatDistanceToNow(new Date(comment.commentedon))} ago
-                  </span>
+  {comment.commentedon &&
+  !Number.isNaN(new Date(comment.commentedon).getTime())
+    ? `${formatDistanceToNow(new Date(comment.commentedon))} ago`
+    : "Date unavailable"}
+</span>
+
+{(comment.updatedAt || comment.editedAt) && (
+  <span className="text-xs text-gray-500">(Edited)</span>
+)}
                 </div>
 
                 {editingCommentId === comment._id ? (

@@ -52,13 +52,13 @@ const Videogrid = () => {
   };
 
   // const videos = [
-  //   {
-  //     _id: "1",
-  //     videotitle: "Amazing Nature Documentary",
-  //     filename: "nature-doc.mp4",
+  //  {
+  //    _id: "1",
+  //      videotitle: "Amazing Nature Documentary",
+  //      filename: "nature-doc.mp4",
   //     filetype: "video/mp4",
-  //     filepath: "/videos/nature-doc.mp4",
-  //     filesize: "500MB",
+  //      filepath: "/videos/nature-doc.mp4",
+  //      filesize: "500MB",
   //     videochanel: "Nature Channel",
   //     Like: 1250,
   //     views: 45000,
@@ -78,7 +78,7 @@ const Videogrid = () => {
   //     uploader: "chef_master",
   //     createdAt: new Date(Date.now() - 86400000).toISOString(),
   //   },
-  // ];
+  //  ];
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {loading ? (

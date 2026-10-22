@@ -12,16 +12,10 @@ const categories = [
     'Education',
     'Comedy',
     'Travel',
-    'Fashion',
-    'Food',
     'Science',
     'Health',
     'Art',
-    'History',
-    'Business',
-    'Politics',
-    'Environment',
-    'Lifestyle'
+    
 ]
 const CategoryTabs = () => {
  const [activeCategory, setActiveCategory] = useState('All');

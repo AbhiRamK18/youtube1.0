@@ -1,59 +1,83 @@
 "use client";
-import React, { useEffect, useState } from "react";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import axiosInstance from "@/lib/axiosinstance";
+import { getVideoUrl } from "@/lib/videoUrl";
+
 const SearchResult = ({ query }: any) => {
+  const [videos, setVideos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const searchQuery = query.trim().toLowerCase();
+
+    if (!searchQuery) {
+      setVideos([]);
+      setLoading(false);
+      setLoadError(false);
+      return;
+    }
+
+    setLoading(true);
+    setLoadError(false);
+    axiosInstance
+      .get("/video/getall")
+      .then((response) => {
+        const allVideos = Array.isArray(response.data) ? response.data : [];
+        const results = allVideos.filter(
+          (video: any) =>
+            video.videotitle?.toLowerCase().includes(searchQuery) ||
+            video.videochanel?.toLowerCase().includes(searchQuery)
+        );
+
+        if (!cancelled) {
+          setVideos(results);
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to search videos:", error);
+        if (!cancelled) {
+          setLoadError(true);
+          setVideos([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
+
   if (!query.trim()) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-600">
-          Enter a search term to find videos and channels.
-        </p>
+      <div className="py-12 text-center">
+        <p className="text-gray-600">Enter a search term to find videos.</p>
       </div>
     );
   }
-  const [video, setvideos] = useState<any>(null);
-  const videos = async () => {
-    const allVideos = [
-      {
-        _id: "1",
-        videotitle: "Amazing Nature Documentary",
-        filename: "nature-doc.mp4",
-        filetype: "video/mp4",
-        filepath: "/videos/nature-doc.mp4",
-        filesize: "500MB",
-        videochanel: "Nature Channel",
-        Like: 1250,
-        views: 45000,
-        uploader: "nature_lover",
-        createdAt: new Date().toISOString(),
-      },
-      {
-        _id: "2",
-        videotitle: "Cooking Tutorial: Perfect Pasta",
-        filename: "pasta-tutorial.mp4",
-        filetype: "video/mp4",
-        filepath: "/videos/pasta-tutorial.mp4",
-        filesize: "300MB",
-        videochanel: "Chef's Kitchen",
-        Like: 890,
-        views: 23000,
-        uploader: "chef_master",
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ];
-    let results = allVideos.filter(
-      (vid) =>
-        vid.videotitle.toLowerCase().includes(query.toLowerCase()) ||
-        vid.videochanel.toLowerCase().includes(query.toLowerCase())
+
+  if (loading) {
+    return <div className="py-12 text-center">Searching videos...</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="py-12 text-center">
+        <p>Unable to load search results. Please try again.</p>
+      </div>
     );
-    setvideos(results);
-  };
-  useEffect(() => {
-    videos();
-  }, [query]);
-  if (!video) {
+  }
+
+  if (videos.length === 0) {
     return (
       <div className="text-center py-12">
         <h2 className="text-xl font-semibold mb-2">No results found</h2>
@@ -63,30 +87,20 @@ const SearchResult = ({ query }: any) => {
       </div>
     );
   }
-  const hasResults = video ? video.length > 0 : true;
-  if (!hasResults) {
-    return (
-      <div className="text-center py-12">
-        <h2 className="text-xl font-semibold mb-2">No results found</h2>
-        <p className="text-gray-600">
-          Try different keywords or remove search filters
-        </p>
-      </div>
-    );
-  }
-  const vids = "/video/vdo.mp4";
+
   return (
     <div className="space-y-6">
-      {/* Video Results */}
-      {video.length > 0 && (
-        <div className="space-y-4">
-          {video.map((video: any) => (
-            <div key={video._id} className="flex gap-4 group">
+      <div className="space-y-4">
+        {videos.map((video: any) => (
+          <div key={video._id} className="flex gap-4 group">
               <Link href={`/watch/${video._id}`} className="flex-shrink-0">
                 <div className="relative w-80 aspect-video bg-gray-100 rounded-lg overflow-hidden">
                   <video
-                    src={vids}
-                    className="object-cover group-hover:scale-105 transition-transform duration-200"
+                    src={getVideoUrl(video.filepath)}
+                    className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
+                    muted
+                    playsInline
+                    preload="metadata"
                   />
                   <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">
                     10:24
@@ -102,7 +116,7 @@ const SearchResult = ({ query }: any) => {
                 </Link>
 
                 <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-                  <span>{video.views.toLocaleString()} views</span>
+                  <span>                  {(video.views ?? 0).toLocaleString()} views</span>
                   <span>•</span>
                   <span>
                     {formatDistanceToNow(new Date(video.createdAt))} ago
@@ -130,19 +144,15 @@ const SearchResult = ({ query }: any) => {
                   before clicking.
                 </p>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+          </div>
+        ))}
+      </div>
 
-      {/* Load More Results */}
-      {hasResults && (
-        <div className="text-center py-8">
-          <p className="text-gray-600">
-            Showing {videos.length} results for "{query}"
-          </p>
-        </div>
-      )}
+      <div className="text-center py-8">
+        <p className="text-gray-600">
+          Showing {videos.length} results for "{query}"
+        </p>
+      </div>
     </div>
   );
 };

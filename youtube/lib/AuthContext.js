@@ -26,7 +26,7 @@ export const UserProvider = ({ children }) => {
   };
   const handlegooglesignin = async () => {
     try {
-      const result = await signInWithPopup(auth, provider);
+      const result = await signInWithPopup( auth, provider);
       const firebaseuser = result.user;
       const payload = {
         email: firebaseuser.email,
