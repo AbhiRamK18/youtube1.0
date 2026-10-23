@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState,useMemo } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
@@ -17,10 +17,47 @@ interface Comment {
   likes?: number;
   avatar?: string;
   image?: string;
+  username?: string;
   location?: string;
   updatedAt?: string;
   editedAt?: string;
 }
+interface Reply {
+  _id: string;
+  commentid: string;
+  userid: string;
+  userreplied: string;
+  replybody: string;
+  createdAt?: string;
+  username?: string;
+  location?: string;
+}
+type LanguageCode = "en" | "te" | "hi" | "ta" | "kn" | "ml";
+
+const languages: { code: LanguageCode; name: string }[] = [
+  { code: "en", name: "English" },
+  { code: "te", name: "Telugu" },
+  { code: "hi", name: "Hindi" },
+  { code: "ta", name: "Tamil" },
+  { code: "kn", name: "Kannada" },
+  { code: "ml", name: "Malayalam" },
+];
+
+const renderMentions = (text: string) => {
+  return text.split(/(@[a-zA-Z0-9_]+)/g).map((part, index) =>
+    part.startsWith("@") ? (
+      <span
+        key={index}
+        className="font-semibold text-blue-600 dark:text-blue-400"
+      >
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  );
+};
+
 const Comments = ({ videoId }: any) => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
@@ -30,8 +67,18 @@ const Comments = ({ videoId }: any) => {
   const { user } = useUser();
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<
-  "relevant" | "newest" | "oldest" | "mostLiked"
+    "relevant" | "newest" | "oldest" | "mostLiked"
   >("relevant");
+  const [voteData, setVoteData] = useState<
+    Record<
+      string,
+      {
+        likes: number;
+        dislikes: number;
+        userVote: "like" | "dislike" | null;
+      }
+    >
+  >({});
   const fetchedComments = [
     {
       _id: "1",
@@ -50,54 +97,94 @@ const Comments = ({ videoId }: any) => {
       commentedon: new Date(Date.now() - 7200000).toISOString(),
     },
   ];
+  const [replies, setReplies] = useState<Record<string, Reply[]>>({});
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [loadingReplies, setLoadingReplies] = useState<string | null>(null);
+  // Comment reporting state
+  type ReportReason =
+    | "spam"
+    | "harassment"
+    | "hate_speech"
+    | "inappropriate_content"
+    | "misinformation"
+    | "dangerous_links"
+    | "other";
+
+  const [reportingCommentId, setReportingCommentId] = useState<string | null>(
+    null,
+  );
+
+  const [reportReason, setReportReason] = useState<ReportReason>("spam");
+
+  const [reportDetails, setReportDetails] = useState("");
+
+  const [reportMessages, setReportMessages] = useState<
+    Record<string, { type: "success" | "error"; message: string }>
+  >({});
+  const [targetLanguage, setTargetLanguage] = useState<LanguageCode>("en");
+  const [sourceLanguage, setSourceLanguage] = useState<LanguageCode>("en");
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+
+  const [translatingCommentId, setTranslatingCommentId] = useState<
+    string | null
+  >(null);
+
+  const [translationErrors, setTranslationErrors] = useState<
+    Record<string, string>
+  >({});
+
   useEffect(() => {
     loadComments();
-  }, [videoId]);
+  }, [videoId, user?._id]);
 
-  const loadComments = async () => {
+  async function loadComments() {
     try {
       const res = await axiosInstance.get(`/comment/${videoId}`);
       setComments(res.data);
+      const voteRes = await axiosInstance.get(`/comment/votes/${videoId}`, {
+        params: user?._id ? { userid: user._id } : {},
+      });
+
+      setVoteData(voteRes.data);
     } catch (error) {
       console.log(error);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const sortedComments = useMemo(() => {
-  const result = [...comments];
+    const result = [...comments];
 
-  switch (sortBy) {
-    case "newest":
-      return result.sort(
-        (a, b) =>
-          new Date(b.commentedon).getTime() -
-          new Date(a.commentedon).getTime()
-      );
+    switch (sortBy) {
+      case "newest":
+        return result.sort(
+          (a, b) =>
+            new Date(b.commentedon).getTime() -
+            new Date(a.commentedon).getTime(),
+        );
 
-    case "oldest":
-      return result.sort(
-        (a, b) =>
-          new Date(a.commentedon).getTime() -
-          new Date(b.commentedon).getTime()
-      );
+      case "oldest":
+        return result.sort(
+          (a, b) =>
+            new Date(a.commentedon).getTime() -
+            new Date(b.commentedon).getTime(),
+        );
 
-    case "mostLiked":
-      return result.sort(
-        (a, b) => (b.likes ?? 0) - (a.likes ?? 0)
-      );
+      case "mostLiked":
+        return result.sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0));
 
-    case "relevant":
-    default:
-      // Until relevance scoring is implemented, show newest first.
-      return result.sort(
-        (a, b) =>
-          new Date(b.commentedon).getTime() -
-          new Date(a.commentedon).getTime()
-      );
-  }
-}, [comments, sortBy]);
+      case "relevant":
+      default:
+        // Until relevance scoring is implemented, show newest first.
+        return result.sort(
+          (a, b) =>
+            new Date(b.commentedon).getTime() -
+            new Date(a.commentedon).getTime(),
+        );
+    }
+  }, [comments, sortBy]);
 
   if (loading) {
     return <div>Loading history...</div>;
@@ -123,16 +210,16 @@ const Comments = ({ videoId }: any) => {
           commentedon: new Date().toISOString(),
         };
         setComments((prev) =>
-  prev.map((c) =>
-    c._id === editingCommentId
-      ? {
-          ...c,
-          commentbody: editText.trim(),
-          updatedAt: new Date().toISOString(),
-        }
-      : c
-  )
-);
+          prev.map((c) =>
+            c._id === editingCommentId
+              ? {
+                  ...c,
+                  commentbody: editText.trim(),
+                  updatedAt: new Date().toISOString(),
+                }
+              : c,
+          ),
+        );
       }
       setNewComment("");
     } catch (error) {
@@ -152,13 +239,19 @@ const Comments = ({ videoId }: any) => {
     try {
       const res = await axiosInstance.post(
         `/comment/editcomment/${editingCommentId}`,
-        { commentbody: editText }
+        { commentbody: editText },
       );
       if (res.data) {
         setComments((prev) =>
           prev.map((c) =>
-            c._id === editingCommentId ? { ...c, commentbody: editText } : c
-          )
+            c._id === editingCommentId
+              ? {
+                  ...c,
+                  commentbody: editText,
+                  updatedon: new Date().toISOString(),
+                }
+              : c,
+          ),
         );
         setEditingCommentId(null);
         setEditText("");
@@ -178,33 +271,234 @@ const Comments = ({ videoId }: any) => {
       console.log(error);
     }
   };
+
+  const handleVote = async (commentId: string, vote: "like" | "dislike") => {
+    if (!user) {
+      alert("Please sign in to vote.");
+      return;
+    }
+
+    try {
+      const res = await axiosInstance.post(`/comment/vote/${commentId}`, {
+        userid: user._id,
+        vote,
+      });
+
+      setVoteData((prev) => ({
+        ...prev,
+        [commentId]: res.data,
+      }));
+    } catch (error) {
+      console.error("Error voting on comment:", error);
+    }
+  };
+
+  const loadReplies = async (commentId: string) => {
+    setLoadingReplies(commentId);
+
+    try {
+      const res = await axiosInstance.get(`/comment/${commentId}/replies`);
+
+      setReplies((prev) => ({
+        ...prev,
+        [commentId]: res.data,
+      }));
+    } catch (error) {
+      console.error("Error loading replies:", error);
+    } finally {
+      setLoadingReplies(null);
+    }
+  };
+  const handleSubmitReply = async (commentId: string) => {
+    if (!user) {
+      alert("Please sign in to reply.");
+      return;
+    }
+
+    if (!replyText.trim()) return;
+
+    try {
+      const res = await axiosInstance.post(`/comment/${commentId}/replies`, {
+        userid: user._id,
+        userreplied: user.name || "Anonymous",
+        replybody: replyText.trim(),
+      });
+
+      setReplies((prev) => ({
+        ...prev,
+        [commentId]: [...(prev[commentId] || []), res.data],
+      }));
+
+      setReplyText("");
+      setReplyingTo(null);
+    } catch (error) {
+      console.error("Error submitting reply:", error);
+    }
+  };
+  const handleDeleteReply = async (commentId: string, replyId: string) => {
+    try {
+      await axiosInstance.delete(`/comment/reply/${replyId}`);
+
+      setReplies((prev) => ({
+        ...prev,
+        [commentId]: (prev[commentId] || []).filter(
+          (reply) => reply._id !== replyId,
+        ),
+      }));
+    } catch (error) {
+      console.error("Error deleting reply:", error);
+    }
+  };
+
+  // Submit a report for a comment
+  const handleReportComment = async (commentId: string) => {
+    if (!user?._id) {
+      alert("Please sign in to report a comment.");
+      return;
+    }
+
+    try {
+      await axiosInstance.post("/comment/report", {
+        commentid: commentId,
+        reporterid: user._id,
+        reason: reportReason,
+        details: reportDetails.trim(),
+      });
+
+      setReportMessages((prev) => ({
+        ...prev,
+        [commentId]: {
+          type: "success",
+          message: "Report submitted successfully for review.",
+        },
+      }));
+
+      setReportingCommentId(null);
+      setReportDetails("");
+      setReportReason("spam");
+    } catch (error: any) {
+      console.error("Error reporting comment:", error);
+
+      const status = error?.response?.status;
+
+      let message = "Unable to submit your report. Please try again.";
+
+      if (status === 409) {
+        message = "You have already reported this comment.";
+      } else if (status === 400) {
+        message =
+          error?.response?.data?.message || "Invalid report information.";
+      } else if (status === 404) {
+        message = "This comment could not be found.";
+      }
+
+      setReportMessages((prev) => ({
+        ...prev,
+        [commentId]: {
+          type: "error",
+          message,
+        },
+      }));
+    }
+  };
+
+  const handleTranslate = async (commentId: string, originalText: string) => {
+    const text = originalText.trim();
+
+    if (!text) return;
+
+    if (sourceLanguage === targetLanguage) {
+      setTranslationErrors((prev) => ({
+        ...prev,
+        [commentId]: "Choose two different languages.",
+      }));
+      return;
+    }
+
+    // Unique key prevents showing stale translations.
+    const cacheKey = JSON.stringify([
+      commentId,
+      text,
+      sourceLanguage,
+      targetLanguage,
+    ]);
+
+    // Reuse a translation instead of calling the API again.
+    if (translations[cacheKey]) {
+      setTranslationErrors((prev) => ({
+        ...prev,
+        [commentId]: "",
+      }));
+      return;
+    }
+
+    setTranslatingCommentId(commentId);
+
+    setTranslationErrors((prev) => ({
+      ...prev,
+      [commentId]: "",
+    }));
+
+    try {
+      const res = await axiosInstance.post("/comment/translate", {
+        text,
+        sourceLang: sourceLanguage,
+        targetLang: targetLanguage,
+      });
+
+      const translatedText = res.data.translatedText;
+
+      if (typeof translatedText !== "string" || !translatedText.trim()) {
+        throw new Error("The translation service returned no text.");
+      }
+
+      setTranslations((prev) => ({
+        ...prev,
+        [cacheKey]: translatedText,
+      }));
+    } catch (error: any) {
+      console.error("Translation error:", error);
+
+      const status = error?.response?.status;
+
+      let message = "Translation failed. Please try again later.";
+
+      if (status === 429) {
+        message = "Translation limit reached. Please wait before trying again.";
+      } else if (status === 502 || !error?.response) {
+        message = "Translation service is unavailable. Please try again later.";
+      }
+
+      setTranslationErrors((prev) => ({
+        ...prev,
+        [commentId]: message,
+      }));
+    } finally {
+      setTranslatingCommentId(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-  <h2 className="text-xl font-semibold">
-    {comments.length} Comments
-  </h2>
+        <h2 className="text-xl font-semibold">{comments.length} Comments</h2>
 
-  <select
-    value={sortBy}
-    onChange={(e) =>
-      setSortBy(
-        e.target.value as
-          | "relevant"
-          | "newest"
-          | "oldest"
-          | "mostLiked"
-      )
-    }
-    aria-label="Sort comments"
-    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-gray-400"
-  >
-    <option value="relevant">Relevant</option>
-    <option value="newest">Newest</option>
-    <option value="oldest">Oldest</option>
-    <option value="mostLiked">Most liked</option>
-  </select>
-</div>
+        <select
+          value={sortBy}
+          onChange={(e) =>
+            setSortBy(
+              e.target.value as "relevant" | "newest" | "oldest" | "mostLiked",
+            )
+          }
+          aria-label="Sort comments"
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-gray-400"
+        >
+          <option value="relevant">Relevant</option>
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="mostLiked">Most liked</option>
+        </select>
+      </div>
 
       {user && (
         <div className="flex gap-4">
@@ -255,15 +549,26 @@ const Comments = ({ videoId }: any) => {
                     {comment.usercommented}
                   </span>
                   <span className="text-xs text-gray-600">
-  {comment.commentedon &&
-  !Number.isNaN(new Date(comment.commentedon).getTime())
-    ? `${formatDistanceToNow(new Date(comment.commentedon))} ago`
-    : "Date unavailable"}
-</span>
-
-{(comment.updatedAt || comment.editedAt) && (
-  <span className="text-xs text-gray-500">(Edited)</span>
+                    {comment.commentedon &&
+                    !Number.isNaN(new Date(comment.commentedon).getTime())
+                      ? `${formatDistanceToNow(new Date(comment.commentedon))} ago`
+                      : "Date unavailable"}
+                  </span>
+                  {comment.username && (
+  <span className="text-xs text-blue-600 dark:text-blue-400">
+    @{comment.username}
+  </span>
 )}
+
+{comment.location && (
+  <span className="text-xs text-gray-500">
+    📍 {comment.location}
+  </span>
+)}
+
+                  {(comment.updatedAt || comment.editedAt) && (
+                    <span className="text-xs text-gray-500">(Edited)</span>
+                  )}
                 </div>
 
                 {editingCommentId === comment._id ? (
@@ -292,7 +597,372 @@ const Comments = ({ videoId }: any) => {
                   </div>
                 ) : (
                   <>
-                    <p className="text-sm">{comment.commentbody}</p>
+                    <p className="text-sm whitespace-pre-wrap">{renderMentions(comment.commentbody)}</p>
+
+                    {/* Translation controls */}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <select
+                        value={sourceLanguage}
+                        onChange={(e) =>
+                          setSourceLanguage(e.target.value as LanguageCode)
+                        }
+                        className="rounded-md border px-2 py-1 text-sm"
+                        aria-label="Original comment language"
+                      >
+                        {languages.map((language) => (
+                          <option key={language.code} value={language.code}>
+                            From: {language.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={targetLanguage}
+                        onChange={(e) =>
+                          setTargetLanguage(e.target.value as LanguageCode)
+                        }
+                        className="rounded-md border px-2 py-1 text-sm"
+                        aria-label="Choose translation language"
+                      >
+                        {languages.map((language) => (
+                          <option key={language.code} value={language.code}>
+                            {language.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={
+                          translatingCommentId === comment._id ||
+                          sourceLanguage === targetLanguage
+                        }
+                        onClick={() =>
+                          handleTranslate(comment._id, comment.commentbody)
+                        }
+                      >
+                        {translatingCommentId === comment._id
+                          ? "Translating..."
+                          : "Translate"}
+                      </Button>
+                    </div>
+
+                    {/* Show translated text */}
+                    {translations[
+                      JSON.stringify([
+                        comment._id,
+                        comment.commentbody.trim(),
+                        sourceLanguage,
+                        targetLanguage,
+                      ])
+                    ] && (
+                      <div className="mt-2 rounded-md bg-muted p-3">
+                        <p className="text-sm font-medium">
+                          {
+                            languages.find(
+                              (language) => language.code === targetLanguage,
+                            )?.name
+                          }{" "}
+                          translation
+                        </p>
+
+                        <p className="mt-1 whitespace-pre-wrap text-sm">
+                          {
+                            translations[
+                              JSON.stringify([
+                                comment._id,
+                                comment.commentbody.trim(),
+                                sourceLanguage,
+                                targetLanguage,
+                              ])
+                            ]
+                          }
+                        </p>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const cacheKey = JSON.stringify([
+                              comment._id,
+                              comment.commentbody.trim(),
+                              sourceLanguage,
+                              targetLanguage,
+                            ]);
+
+                            setTranslations((prev) => {
+                              const updated = { ...prev };
+                              delete updated[cacheKey];
+                              return updated;
+                            });
+                          }}
+                        >
+                          Hide translation
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Translation errors */}
+                    {translationErrors[comment._id] && (
+                      <p className="mt-2 text-sm text-red-500">
+                        {translationErrors[comment._id]}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-3 mt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleVote(comment._id, "like")}
+                        className={
+                          voteData[comment._id]?.userVote === "like"
+                            ? "bg-gray-200"
+                            : ""
+                        }
+                      >
+                        👍 {voteData[comment._id]?.likes ?? 0}
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleVote(comment._id, "dislike")}
+                        className={
+                          voteData[comment._id]?.userVote === "dislike"
+                            ? "bg-gray-200"
+                            : ""
+                        }
+                      >
+                        👎 {voteData[comment._id]?.dislikes ?? 0}
+                      </Button>
+                    </div>
+                    {/* Reply button */}
+                    <div className="mt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const isClosing = replyingTo === comment._id;
+
+                          setReplyingTo(isClosing ? null : comment._id);
+                          setReplyText("");
+
+                          if (!isClosing && !replies[comment._id]) {
+                            void loadReplies(comment._id);
+                          }
+                        }}
+                      >
+                        Reply ({replies[comment._id]?.length ?? 0})
+                      </Button>
+                    </div>
+
+                    {/* Report button */}
+                    {user && comment.userid !== user._id && (
+                      <div className="mt-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setReportingCommentId(
+                              reportingCommentId === comment._id
+                                ? null
+                                : comment._id,
+                            );
+
+                            setReportDetails("");
+                            setReportReason("spam");
+                          }}
+                        >
+                          🚩 Report
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Report form */}
+                    {reportingCommentId === comment._id && (
+                      <div className="mt-3 space-y-3 rounded-lg border p-4">
+                        <p className="text-sm font-semibold">
+                          Report this comment
+                        </p>
+
+                        <label
+                          className="block text-sm"
+                          htmlFor={`report-reason-${comment._id}`}
+                        >
+                          Reason for reporting
+                        </label>
+
+                        <select
+                          id={`report-reason-${comment._id}`}
+                          value={reportReason}
+                          onChange={(e) =>
+                            setReportReason(e.target.value as ReportReason)
+                          }
+                          className="w-full rounded-md border px-3 py-2 text-sm"
+                        >
+                          <option value="spam">
+                            Spam or misleading content
+                          </option>
+                          <option value="harassment">
+                            Harassment or bullying
+                          </option>
+                          <option value="hate_speech">Hate speech</option>
+                          <option value="inappropriate_content">
+                            Inappropriate content
+                          </option>
+                          <option value="misinformation">Misinformation</option>
+                          <option value="dangerous_links">
+                            Dangerous links
+                          </option>
+                          <option value="other">Other</option>
+                        </select>
+
+                        <label
+                          className="block text-sm"
+                          htmlFor={`report-details-${comment._id}`}
+                        >
+                          Additional details (optional)
+                        </label>
+
+                        <Textarea
+                          id={`report-details-${comment._id}`}
+                          placeholder="Explain why you are reporting this comment..."
+                          value={reportDetails}
+                          onChange={(e) => setReportDetails(e.target.value)}
+                          maxLength={500}
+                          rows={3}
+                        />
+
+                        <p className="text-xs text-gray-500">
+                          {reportDetails.length}/500 characters
+                        </p>
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleReportComment(comment._id)}
+                          >
+                            Submit Report
+                          </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setReportingCommentId(null);
+                              setReportDetails("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Report submission result */}
+                    {reportMessages[comment._id] && (
+                      <p
+                        role="status"
+                        className={`mt-2 text-sm ${
+                          reportMessages[comment._id].type === "success"
+                            ? "text-green-600"
+                            : "text-red-500"
+                        }`}
+                      >
+                        {reportMessages[comment._id].message}
+                      </p>
+                    )}
+
+                    {/* Reply input */}
+                    {replyingTo === comment._id && (
+                      <div className="mt-2 space-y-2">
+                        <Textarea
+                          placeholder="Write a reply..."
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          rows={2}
+                        />
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleSubmitReply(comment._id)}
+                            disabled={!replyText.trim()}
+                          >
+                            Reply
+                          </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setReplyingTo(null);
+                              setReplyText("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Display nested replies */}
+                    {loadingReplies === comment._id && (
+                      <p className="ml-6 mt-2 text-sm text-gray-500">
+                        Loading replies...
+                      </p>
+                    )}
+
+                    <div className="ml-6 mt-2 space-y-3 border-l-2 pl-4">
+                      {(replies[comment._id] || []).map((reply) => (
+                        <div key={reply._id} className="text-sm">
+                          <div className="flex items-center justify-between gap-2">
+    <div className="flex flex-wrap items-center gap-2">
+  <span className="font-semibold">
+    {reply.userreplied || "Anonymous"}
+  </span>
+
+  {reply.username && (
+    <span className="text-xs text-blue-600 dark:text-blue-400">
+      @{reply.username}
+    </span>
+  )}
+
+  {reply.location && (
+    <span className="text-xs text-gray-500">
+      📍 {reply.location}
+    </span>
+  )}
+</div>
+
+                            {user?._id === reply.userid && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  handleDeleteReply(comment._id, reply._id)
+                                }
+                              >
+                                Delete
+                              </Button>
+                            )}
+                          </div>
+
+                          <p className="mt-1 whitespace-pre-wrap">
+                            {renderMentions(reply.replybody)}
+                          </p>
+
+                          {reply.createdAt && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              {formatDistanceToNow(new Date(reply.createdAt), {
+                                addSuffix: true,
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
                     {comment.userid === user?._id && (
                       <div className="flex gap-2 mt-2 text-sm text-gray-500">
                         <button onClick={() => handleEdit(comment)}>

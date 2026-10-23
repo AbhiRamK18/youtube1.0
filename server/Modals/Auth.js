@@ -1,10 +1,23 @@
 import mongoose from "mongoose";
+
 const userschema = mongoose.Schema({
   email: { type: String, required: true },
   name: { type: String },
   channelname: { type: String },
   description: { type: String },
   image: { type: String },
+
+  // New fields for the commenting system
+  username: {
+    type: String,
+    trim: true,
+    lowercase: true,
+  },
+  location: {
+    type: String,
+    trim: true,
+  },
+
   joinedon: { type: Date, default: Date.now },
 });
 
