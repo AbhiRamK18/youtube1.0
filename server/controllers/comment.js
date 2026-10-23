@@ -74,7 +74,7 @@ export const getallcomment = async (req, res) => {
   try {
     const commentvideo = await comment
       .find({ videoid })
-      .populate("userid", "name username image avatar location")
+      .populate("userid", "name channelname username image avatar location")
       .sort({ createdAt: -1 });
 
     const formattedComments = commentvideo.map((item) => {
@@ -90,11 +90,12 @@ export const getallcomment = async (req, res) => {
         // Keep the existing frontend field as a string.
         userid: author?._id?.toString() ?? data.userid?.toString(),
 
-        // Prefer current profile data, with saved comment name as fallback.
+        // Prefer the author's current channel name, with saved names as fallback.
         usercommented:
+          author?.channelname ||
+          data.usercommented ||
           author?.name ||
           author?.username ||
-          data.usercommented ||
           "Anonymous",
           username: author?.username || "",
 
@@ -345,7 +346,7 @@ export const getReplies = async (req, res) => {
   try {
 const replies = await reply
   .find({ commentid })
-  .populate("userid", "name username image avatar location")
+  .populate("userid", "name channelname username image avatar location")
   .sort({ createdAt: 1 });
 
 const formattedReplies = replies.map((item) => {
@@ -361,9 +362,10 @@ const formattedReplies = replies.map((item) => {
     userid: author?._id?.toString() ?? data.userid?.toString(),
     username: author?.username || "",
     userreplied:
+      author?.channelname ||
+      data.userreplied ||
       author?.name ||
       author?.username ||
-      data.userreplied ||
       "Anonymous",
     userimage: author?.image || author?.avatar || "",
     location: author?.location || "",

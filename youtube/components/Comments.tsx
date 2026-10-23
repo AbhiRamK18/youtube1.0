@@ -43,19 +43,38 @@ const languages: { code: LanguageCode; name: string }[] = [
   { code: "ml", name: "Malayalam" },
 ];
 
-const renderMentions = (text: string) => {
-  return text.split(/(@[a-zA-Z0-9_]+)/g).map((part, index) =>
-    part.startsWith("@") ? (
+const renderMentions = (text: string, userIds: string[]) => {
+  const knownUserIds = [...new Set(userIds.filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .map((userId) => userId.replace(/^@/, ""));
+  const knownIdPattern = knownUserIds
+    .map((userId) => userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const mentionPattern = new RegExp(
+    knownIdPattern
+      ? `@(?:${knownIdPattern})(?![\\p{L}\\p{N}_])|@[\\p{L}\\p{N}_-]+`
+      : `@[\\p{L}\\p{N}_-]+`,
+    "giu"
+  );
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(mentionPattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) parts.push(text.slice(lastIndex, index));
+    parts.push(
       <span
         key={index}
         className="font-semibold text-blue-600 dark:text-blue-400"
       >
-        {part}
+        {match[0]}
       </span>
-    ) : (
-      part
-    )
-  );
+    );
+    lastIndex = index + match[0].length;
+  }
+
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
 };
 
 const Comments = ({ videoId }: any) => {
@@ -98,6 +117,23 @@ const Comments = ({ videoId }: any) => {
     },
   ];
   const [replies, setReplies] = useState<Record<string, Reply[]>>({});
+  const mentionUserIds = useMemo(
+    () =>
+      [
+        user?.channelname,
+        ...comments.flatMap((comment) => [
+          comment.usercommented,
+          comment.username,
+        ]),
+        ...Object.values(replies).flatMap((commentReplies) =>
+          commentReplies.flatMap((reply) => [
+            reply.userreplied,
+            reply.username,
+          ])
+        ),
+      ].filter((userId): userId is string => Boolean(userId)),
+    [comments, replies, user?.channelname]
+  );
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
   const [loadingReplies, setLoadingReplies] = useState<string | null>(null);
@@ -198,7 +234,7 @@ const Comments = ({ videoId }: any) => {
         videoid: videoId,
         userid: user._id,
         commentbody: newComment,
-        usercommented: user.name,
+        usercommented: user.channelname || user.name,
       });
       if (res.data.comment) {
         const newCommentObj: Comment = {
@@ -206,7 +242,7 @@ const Comments = ({ videoId }: any) => {
           videoid: videoId,
           userid: user._id,
           commentbody: newComment,
-          usercommented: user.name || "Anonymous",
+          usercommented: user.channelname || user.name || "Anonymous",
           commentedon: new Date().toISOString(),
         };
         setComments((prev) =>
@@ -320,7 +356,7 @@ const Comments = ({ videoId }: any) => {
     try {
       const res = await axiosInstance.post(`/comment/${commentId}/replies`, {
         userid: user._id,
-        userreplied: user.name || "Anonymous",
+        userreplied: user.channelname || user.name || "Anonymous",
         replybody: replyText.trim(),
       });
 
@@ -597,7 +633,9 @@ const Comments = ({ videoId }: any) => {
                   </div>
                 ) : (
                   <>
-                    <p className="text-sm whitespace-pre-wrap">{renderMentions(comment.commentbody)}</p>
+                    <p className="text-sm whitespace-pre-wrap">
+                      {renderMentions(comment.commentbody, mentionUserIds)}
+                    </p>
 
                     {/* Translation controls */}
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -949,7 +987,7 @@ const Comments = ({ videoId }: any) => {
                           </div>
 
                           <p className="mt-1 whitespace-pre-wrap">
-                            {renderMentions(reply.replybody)}
+                            {renderMentions(reply.replybody, mentionUserIds)}
                           </p>
 
                           {reply.createdAt && (
