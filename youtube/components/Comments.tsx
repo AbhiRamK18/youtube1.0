@@ -19,8 +19,12 @@ interface Comment {
   image?: string;
   username?: string;
   location?: string;
+  createdAt?: string;
   updatedAt?: string;
   editedAt?: string;
+  isDeleted?: boolean;
+  editHistory?: Array<{ commentbody: string; editedAt: string }>;
+  canEdit?: boolean;
 }
 interface Reply {
   _id: string;
@@ -31,6 +35,7 @@ interface Reply {
   createdAt?: string;
   username?: string;
   location?: string;
+  userimage?: string;
 }
 type LanguageCode = "en" | "te" | "hi" | "ta" | "kn" | "ml";
 
@@ -77,9 +82,13 @@ const renderMentions = (text: string, userIds: string[]) => {
   return parts;
 };
 
-const Comments = ({ videoId }: any) => {
+const Comments = ({ videoId }: { videoId: string }) => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
+  const [commentError, setCommentError] = useState("");
+  const [captchaQuestion, setCaptchaQuestion] = useState("");
+  const [captchaAnswer, setCaptchaAnswer] = useState("");
+  const [captchaFor, setCaptchaFor] = useState<"comment" | "reply" | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
@@ -98,24 +107,6 @@ const Comments = ({ videoId }: any) => {
       }
     >
   >({});
-  const fetchedComments = [
-    {
-      _id: "1",
-      videoid: videoId,
-      userid: "1",
-      commentbody: "Great video! Really enjoyed watching this.",
-      usercommented: "John Doe",
-      commentedon: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      _id: "2",
-      videoid: videoId,
-      userid: "2",
-      commentbody: "Thanks for sharing this amazing content!",
-      usercommented: "Jane Smith",
-      commentedon: new Date(Date.now() - 7200000).toISOString(),
-    },
-  ];
   const [replies, setReplies] = useState<Record<string, Reply[]>>({});
   const mentionUserIds = useMemo(
     () =>
@@ -161,6 +152,9 @@ const Comments = ({ videoId }: any) => {
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>("en");
   const [sourceLanguage, setSourceLanguage] = useState<LanguageCode>("en");
   const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(
+    null,
+  );
 
   const [translatingCommentId, setTranslatingCommentId] = useState<
     string | null
@@ -171,24 +165,30 @@ const Comments = ({ videoId }: any) => {
   >({});
 
   useEffect(() => {
-    loadComments();
-  }, [videoId, user?._id]);
+    let cancelled = false;
 
-  async function loadComments() {
-    try {
-      const res = await axiosInstance.get(`/comment/${videoId}`);
-      setComments(res.data);
-      const voteRes = await axiosInstance.get(`/comment/votes/${videoId}`, {
-        params: user?._id ? { userid: user._id } : {},
+    axiosInstance
+      .get(`/comment/${videoId}`)
+      .then(async (commentResponse) => {
+        if (cancelled) return;
+        setComments(commentResponse.data);
+        const voteResponse = await axiosInstance.get(
+          `/comment/votes/${videoId}`,
+          { params: user?._id ? { userid: user._id } : {} },
+        );
+        if (!cancelled) setVoteData(voteResponse.data);
+      })
+      .catch((error) => {
+        console.error("Error loading comments:", error);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
       });
 
-      setVoteData(voteRes.data);
-    } catch (error) {
-      console.log(error);
-    } finally {
-      setLoading(false);
-    }
-  }
+    return () => {
+      cancelled = true;
+    };
+  }, [videoId, user?._id]);
 
   const sortedComments = useMemo(() => {
     const result = [...comments];
@@ -209,18 +209,26 @@ const Comments = ({ videoId }: any) => {
         );
 
       case "mostLiked":
-        return result.sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0));
+        return result.sort(
+          (a, b) =>
+            (voteData[b._id]?.likes ?? 0) -
+            (voteData[a._id]?.likes ?? 0),
+        );
 
       case "relevant":
       default:
-        // Until relevance scoring is implemented, show newest first.
-        return result.sort(
-          (a, b) =>
-            new Date(b.commentedon).getTime() -
-            new Date(a.commentedon).getTime(),
-        );
+        return result.sort((a, b) => {
+          const score = (item: Comment) =>
+            (voteData[item._id]?.likes ?? 0) -
+            (voteData[item._id]?.dislikes ?? 0);
+          return (
+            score(b) - score(a) ||
+            new Date(b.commentedon || b.createdAt || 0).getTime() -
+              new Date(a.commentedon || a.createdAt || 0).getTime()
+          );
+        });
     }
-  }, [comments, sortBy]);
+  }, [comments, sortBy, voteData]);
 
   if (loading) {
     return <div>Loading history...</div>;
@@ -229,37 +237,52 @@ const Comments = ({ videoId }: any) => {
     if (!user || !newComment.trim()) return;
 
     setIsSubmitting(true);
+    setCommentError("");
     try {
       const res = await axiosInstance.post("/comment/postcomment", {
         videoid: videoId,
         userid: user._id,
         commentbody: newComment,
         usercommented: user.channelname || user.name,
+        ...(captchaAnswer ? { captchaAnswer } : {}),
       });
       if (res.data.comment) {
+        const created = res.data.data;
         const newCommentObj: Comment = {
-          _id: Date.now().toString(),
+          _id: created?._id || Date.now().toString(),
           videoid: videoId,
           userid: user._id,
-          commentbody: newComment,
+          commentbody: created?.commentbody || newComment.trim(),
           usercommented: user.channelname || user.name || "Anonymous",
-          commentedon: new Date().toISOString(),
+          commentedon: created?.commentedon || new Date().toISOString(),
+          createdAt: created?.createdAt || new Date().toISOString(),
+          updatedAt: created?.updatedAt || new Date().toISOString(),
+          image: user.image || "",
+          avatar: user.image || "",
+          username: user.username || "",
+          location: user.location || "",
+          canEdit: true,
         };
-        setComments((prev) =>
-          prev.map((c) =>
-            c._id === editingCommentId
-              ? {
-                  ...c,
-                  commentbody: editText.trim(),
-                  updatedAt: new Date().toISOString(),
-                }
-              : c,
-          ),
-        );
+        setComments((prev) => [newCommentObj, ...prev]);
       }
       setNewComment("");
+      setCaptchaQuestion("");
+      setCaptchaAnswer("");
+      setCaptchaFor(null);
     } catch (error) {
       console.error("Error adding comment:", error);
+      const response = (error as { response?: { data?: { message?: string } } })
+        .response;
+      const responseData = response?.data as
+        | { captchaRequired?: boolean; captcha?: { question?: string } }
+        | undefined;
+      if (responseData?.captchaRequired && responseData.captcha?.question) {
+        setCaptchaQuestion(responseData.captcha.question);
+        setCaptchaFor("comment");
+      }
+      setCommentError(
+        response?.data?.message || "Unable to add comment. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -275,7 +298,13 @@ const Comments = ({ videoId }: any) => {
     try {
       const res = await axiosInstance.post(
         `/comment/editcomment/${editingCommentId}`,
-        { commentbody: editText },
+        {
+          commentbody: editText,
+          userid: user?._id,
+          expectedUpdatedAt: comments.find(
+            (comment) => comment._id === editingCommentId,
+          )?.updatedAt,
+        },
       );
       if (res.data) {
         setComments((prev) =>
@@ -283,8 +312,9 @@ const Comments = ({ videoId }: any) => {
             c._id === editingCommentId
               ? {
                   ...c,
-                  commentbody: editText,
-                  updatedon: new Date().toISOString(),
+                  commentbody: res.data.commentbody,
+                  updatedAt: res.data.updatedAt,
+                  editHistory: res.data.editHistory,
                 }
               : c,
           ),
@@ -293,15 +323,28 @@ const Comments = ({ videoId }: any) => {
         setEditText("");
       }
     } catch (error) {
-      console.log(error);
+      console.error("Error updating comment:", error);
+      const response = (error as { response?: { data?: { message?: string } } })
+        .response;
+      setCommentError(
+        response?.data?.message || "Unable to update comment. Please try again.",
+      );
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await axiosInstance.delete(`/comment/deletecomment/${id}`);
+      const res = await axiosInstance.delete(`/comment/deletecomment/${id}`, {
+        data: { userid: user?._id },
+      });
       if (res.data.comment) {
-        setComments((prev) => prev.filter((c) => c._id !== id));
+        setComments((prev) =>
+          prev.map((comment) =>
+            comment._id === id
+              ? { ...comment, commentbody: "This comment was deleted.", isDeleted: true }
+              : comment,
+          ),
+        );
       }
     } catch (error) {
       console.log(error);
@@ -353,27 +396,63 @@ const Comments = ({ videoId }: any) => {
 
     if (!replyText.trim()) return;
 
+    setCommentError("");
     try {
       const res = await axiosInstance.post(`/comment/${commentId}/replies`, {
         userid: user._id,
         userreplied: user.channelname || user.name || "Anonymous",
         replybody: replyText.trim(),
+        ...(captchaAnswer ? { captchaAnswer } : {}),
       });
 
       setReplies((prev) => ({
         ...prev,
-        [commentId]: [...(prev[commentId] || []), res.data],
+        [commentId]: [
+          ...(prev[commentId] || []),
+          {
+            ...res.data,
+            userimage: user.image || "",
+            username: user.username || "",
+            location: user.location || "",
+          },
+        ],
       }));
 
       setReplyText("");
       setReplyingTo(null);
+      setCaptchaQuestion("");
+      setCaptchaAnswer("");
+      setCaptchaFor(null);
     } catch (error) {
       console.error("Error submitting reply:", error);
+      const response = (
+        error as {
+          response?: {
+            data?: {
+              message?: string;
+              captchaRequired?: boolean;
+              captcha?: { question?: string };
+            };
+          };
+        }
+      ).response;
+      if (
+        response?.data?.captchaRequired &&
+        response.data.captcha?.question
+      ) {
+        setCaptchaQuestion(response.data.captcha.question);
+        setCaptchaFor("reply");
+      }
+      setCommentError(
+        response?.data?.message || "Unable to submit reply. Please try again.",
+      );
     }
   };
   const handleDeleteReply = async (commentId: string, replyId: string) => {
     try {
-      await axiosInstance.delete(`/comment/reply/${replyId}`);
+      await axiosInstance.delete(`/comment/reply/${replyId}`, {
+        data: { userid: user?._id },
+      });
 
       setReplies((prev) => ({
         ...prev,
@@ -412,10 +491,18 @@ const Comments = ({ videoId }: any) => {
       setReportingCommentId(null);
       setReportDetails("");
       setReportReason("spam");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error reporting comment:", error);
 
-      const status = error?.response?.status;
+      const response = (
+        error as {
+          response?: {
+            status?: number;
+            data?: { message?: string };
+          };
+        }
+      ).response;
+      const status = response?.status;
 
       let message = "Unable to submit your report. Please try again.";
 
@@ -423,7 +510,7 @@ const Comments = ({ videoId }: any) => {
         message = "You have already reported this comment.";
       } else if (status === 400) {
         message =
-          error?.response?.data?.message || "Invalid report information.";
+          response?.data?.message || "Invalid report information.";
       } else if (status === 404) {
         message = "This comment could not be found.";
       }
@@ -492,16 +579,19 @@ const Comments = ({ videoId }: any) => {
         ...prev,
         [cacheKey]: translatedText,
       }));
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Translation error:", error);
 
-      const status = error?.response?.status;
+      const response = (
+        error as { response?: { status?: number } }
+      ).response;
+      const status = response?.status;
 
       let message = "Translation failed. Please try again later.";
 
       if (status === 429) {
         message = "Translation limit reached. Please wait before trying again.";
-      } else if (status === 502 || !error?.response) {
+      } else if (status === 502 || !response) {
         message = "Translation service is unavailable. Please try again later.";
       }
 
@@ -546,9 +636,26 @@ const Comments = ({ videoId }: any) => {
             <Textarea
               placeholder="Add a comment..."
               value={newComment}
-              onChange={(e: any) => setNewComment(e.target.value)}
+              onChange={(e) => setNewComment(e.target.value)}
               className="min-h-[80px] resize-none border-0 border-b-2 rounded-none focus-visible:ring-0"
             />
+            {captchaFor === "comment" && (
+              <label className="flex items-center gap-2 text-sm">
+                <span>{captchaQuestion}</span>
+                <input
+                  aria-label="Verification answer"
+                  inputMode="numeric"
+                  value={captchaAnswer}
+                  onChange={(event) => setCaptchaAnswer(event.target.value)}
+                  className="w-20 rounded border px-2 py-1"
+                />
+              </label>
+            )}
+            {commentError && (
+              <p role="alert" className="text-sm text-red-600">
+                {commentError}
+              </p>
+            )}
             <div className="flex gap-2 justify-end">
               <Button
                 variant="ghost"
@@ -559,7 +666,11 @@ const Comments = ({ videoId }: any) => {
               </Button>
               <Button
                 onClick={handleSubmitComment}
-                disabled={!newComment.trim() || isSubmitting}
+                disabled={
+                  !newComment.trim() ||
+                  isSubmitting ||
+                  (captchaFor === "comment" && !captchaAnswer.trim())
+                }
               >
                 Comment
               </Button>
@@ -584,12 +695,24 @@ const Comments = ({ videoId }: any) => {
                   <span className="font-medium text-sm">
                     {comment.usercommented}
                   </span>
-                  <span className="text-xs text-gray-600">
-                    {comment.commentedon &&
-                    !Number.isNaN(new Date(comment.commentedon).getTime())
-                      ? `${formatDistanceToNow(new Date(comment.commentedon))} ago`
-                      : "Date unavailable"}
-                  </span>
+                  {(() => {
+                    const postedAt = comment.commentedon || comment.createdAt;
+                    const postedDate = postedAt ? new Date(postedAt) : null;
+                    return (
+                      <span
+                        className="text-xs text-gray-600"
+                        title={
+                          postedDate && !Number.isNaN(postedDate.getTime())
+                            ? postedDate.toLocaleString()
+                            : undefined
+                        }
+                      >
+                        {postedDate && !Number.isNaN(postedDate.getTime())
+                          ? formatDistanceToNow(postedDate, { addSuffix: true })
+                          : "Date unavailable"}
+                      </span>
+                    );
+                  })()}
                   {comment.username && (
   <span className="text-xs text-blue-600 dark:text-blue-400">
     @{comment.username}
@@ -602,10 +725,36 @@ const Comments = ({ videoId }: any) => {
   </span>
 )}
 
-                  {(comment.updatedAt || comment.editedAt) && (
-                    <span className="text-xs text-gray-500">(Edited)</span>
+                  {(comment.editHistory?.length || comment.editedAt) && (
+                    <>
+                      <span className="text-xs text-gray-500">(Edited)</span>
+                      {!!comment.editHistory?.length && (
+                        <button
+                          type="button"
+                          className="text-xs text-blue-600 hover:underline"
+                          onClick={() =>
+                            setExpandedHistoryId(
+                              expandedHistoryId === comment._id
+                                ? null
+                                : comment._id,
+                            )
+                          }
+                        >
+                          Edit history
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
+                {expandedHistoryId === comment._id && !!comment.editHistory?.length && (
+                  <div className="mb-2 space-y-1 rounded bg-gray-50 p-2 text-xs text-gray-600">
+                    {[...comment.editHistory].reverse().map((version, index) => (
+                      <p key={`${version.editedAt}-${index}`}>
+                        {version.commentbody}
+                      </p>
+                    ))}
+                  </div>
+                )}
 
                 {editingCommentId === comment._id ? (
                   <div className="space-y-2">
@@ -633,12 +782,18 @@ const Comments = ({ videoId }: any) => {
                   </div>
                 ) : (
                   <>
-                    <p className="text-sm whitespace-pre-wrap">
-                      {renderMentions(comment.commentbody, mentionUserIds)}
-                    </p>
+                    {comment.isDeleted ? (
+                      <p className="text-sm italic text-gray-500">
+                        This comment was deleted.
+                      </p>
+                    ) : (
+                      <p className="text-sm whitespace-pre-wrap">
+                        {renderMentions(comment.commentbody, mentionUserIds)}
+                      </p>
+                    )}
 
                     {/* Translation controls */}
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {!comment.isDeleted && <div className="mt-3 flex flex-wrap items-center gap-2">
                       <select
                         value={sourceLanguage}
                         onChange={(e) =>
@@ -683,10 +838,10 @@ const Comments = ({ videoId }: any) => {
                           ? "Translating..."
                           : "Translate"}
                       </Button>
-                    </div>
+                    </div>}
 
                     {/* Show translated text */}
-                    {translations[
+                    {!comment.isDeleted && translations[
                       JSON.stringify([
                         comment._id,
                         comment.commentbody.trim(),
@@ -741,13 +896,13 @@ const Comments = ({ videoId }: any) => {
                     )}
 
                     {/* Translation errors */}
-                    {translationErrors[comment._id] && (
+                    {!comment.isDeleted && translationErrors[comment._id] && (
                       <p className="mt-2 text-sm text-red-500">
                         {translationErrors[comment._id]}
                       </p>
                     )}
 
-                    <div className="flex items-center gap-3 mt-2">
+                    {!comment.isDeleted && <div className="flex items-center gap-3 mt-2">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -773,7 +928,7 @@ const Comments = ({ videoId }: any) => {
                       >
                         👎 {voteData[comment._id]?.dislikes ?? 0}
                       </Button>
-                    </div>
+                    </div>}
                     {/* Reply button */}
                     <div className="mt-2">
                       <Button
@@ -795,7 +950,7 @@ const Comments = ({ videoId }: any) => {
                     </div>
 
                     {/* Report button */}
-                    {user && comment.userid !== user._id && (
+                    {!comment.isDeleted && user && comment.userid !== user._id && (
                       <div className="mt-2">
                         <Button
                           variant="ghost"
@@ -817,7 +972,7 @@ const Comments = ({ videoId }: any) => {
                     )}
 
                     {/* Report form */}
-                    {reportingCommentId === comment._id && (
+                    {!comment.isDeleted && reportingCommentId === comment._id && (
                       <div className="mt-3 space-y-3 rounded-lg border p-4">
                         <p className="text-sm font-semibold">
                           Report this comment
@@ -912,7 +1067,7 @@ const Comments = ({ videoId }: any) => {
                     )}
 
                     {/* Reply input */}
-                    {replyingTo === comment._id && (
+                    {replyingTo === comment._id && !comment.isDeleted && (
                       <div className="mt-2 space-y-2">
                         <Textarea
                           placeholder="Write a reply..."
@@ -920,12 +1075,29 @@ const Comments = ({ videoId }: any) => {
                           onChange={(e) => setReplyText(e.target.value)}
                           rows={2}
                         />
+                        {captchaFor === "reply" && (
+                          <label className="flex items-center gap-2 text-sm">
+                            <span>{captchaQuestion}</span>
+                            <input
+                              aria-label="Verification answer"
+                              inputMode="numeric"
+                              value={captchaAnswer}
+                              onChange={(event) =>
+                                setCaptchaAnswer(event.target.value)
+                              }
+                              className="w-20 rounded border px-2 py-1"
+                            />
+                          </label>
+                        )}
 
                         <div className="flex gap-2">
                           <Button
                             size="sm"
                             onClick={() => handleSubmitReply(comment._id)}
-                            disabled={!replyText.trim()}
+                            disabled={
+                              !replyText.trim() ||
+                              (captchaFor === "reply" && !captchaAnswer.trim())
+                            }
                           >
                             Reply
                           </Button>
@@ -955,23 +1127,29 @@ const Comments = ({ videoId }: any) => {
                       {(replies[comment._id] || []).map((reply) => (
                         <div key={reply._id} className="text-sm">
                           <div className="flex items-center justify-between gap-2">
-    <div className="flex flex-wrap items-center gap-2">
-  <span className="font-semibold">
-    {reply.userreplied || "Anonymous"}
-  </span>
-
-  {reply.username && (
-    <span className="text-xs text-blue-600 dark:text-blue-400">
-      @{reply.username}
-    </span>
-  )}
-
-  {reply.location && (
-    <span className="text-xs text-gray-500">
-      📍 {reply.location}
-    </span>
-  )}
-</div>
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-7 w-7">
+                                <AvatarImage src={reply.userimage || ""} />
+                                <AvatarFallback>
+                                  {reply.userreplied?.[0] || "U"}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold">
+                                  {reply.userreplied || "Anonymous"}
+                                </span>
+                                {reply.username && (
+                                  <span className="text-xs text-blue-600 dark:text-blue-400">
+                                    @{reply.username}
+                                  </span>
+                                )}
+                                {reply.location && (
+                                  <span className="text-xs text-gray-500">
+                                    📍 {reply.location}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
 
                             {user?._id === reply.userid && (
                               <Button
@@ -1001,11 +1179,13 @@ const Comments = ({ videoId }: any) => {
                       ))}
                     </div>
 
-                    {comment.userid === user?._id && (
+                    {comment.userid === user?._id && !comment.isDeleted && (
                       <div className="flex gap-2 mt-2 text-sm text-gray-500">
-                        <button onClick={() => handleEdit(comment)}>
-                          Edit
-                        </button>
+                        {comment.canEdit && (
+                          <button onClick={() => handleEdit(comment)}>
+                            Edit
+                          </button>
+                        )}
                         <button onClick={() => handleDelete(comment._id)}>
                           Delete
                         </button>

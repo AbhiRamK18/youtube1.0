@@ -5,10 +5,15 @@ import reply from "../Modals/reply.js";
 import { filterCommentText } from "../middleware/commentFilter.js";
 
 export const postcomment = async (req, res) => {
-  const commentdata = req.body;
   const { commentbody, userid, videoid } = req.body;
 
-  // Step 1: Validate the comment text
+  if (
+    !mongoose.Types.ObjectId.isValid(userid) ||
+    !mongoose.Types.ObjectId.isValid(videoid)
+  ) {
+    return res.status(400).json({ message: "Invalid user or video ID" });
+  }
+
   const validation = filterCommentText(commentbody);
 
   if (!validation.valid) {
@@ -33,7 +38,7 @@ export const postcomment = async (req, res) => {
       .trim();
 
     const isDuplicate = recentComments.some((existingComment) => {
-      const normalizedExistingComment = existingComment.commentbody
+      const normalizedExistingComment = (existingComment.commentbody || "")
         .toLowerCase()
         .replace(/\s+/g, " ")
         .trim();
@@ -47,13 +52,19 @@ export const postcomment = async (req, res) => {
       });
     }
 
-    // Step 3: Save the comment
-    commentdata.commentbody = validation.text;
-
-    const newComment = new comment(commentdata);
+    // Save only validated fields; do not persist arbitrary request properties.
+    const newComment = new comment({
+      userid,
+      videoid,
+      commentbody: validation.text,
+      usercommented:
+        typeof req.body.usercommented === "string"
+          ? req.body.usercommented.trim().slice(0, 100)
+          : "",
+    });
     await newComment.save();
 
-    return res.status(200).json({ comment: true });
+    return res.status(201).json({ comment: true, data: newComment });
 
   } catch (error) {
     console.error("Error posting comment:", error);
@@ -103,6 +114,13 @@ export const getallcomment = async (req, res) => {
         userimage: author?.image || author?.avatar || "",
         avatar: author?.avatar || author?.image || "",
         location: author?.location || "",
+        image: author?.image || author?.avatar || "",
+        isDeleted: Boolean(data.isDeleted),
+        canEdit:
+          !data.isDeleted &&
+          Date.now() -
+            (data.createdAt || data.commentedon || new Date(0)).getTime() <=
+            15 * 60 * 1000,
 
         // Mongoose timestamps provide the persistent edit time.
         updatedAt: data.updatedAt,
@@ -126,17 +144,26 @@ export const deletecomment = async (req, res) => {
   }
 
   try {
-    const deletedComment = await comment.findByIdAndDelete(id);
-
-    if (!deletedComment) {
-      return res.status(404).json({ message: "Comment not found" });
+    const { userid } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(userid)) {
+      return res.status(400).json({ message: "Invalid user ID" });
     }
 
-    // Delete all replies belonging to this comment
-    await reply.deleteMany({ commentid: id });
+    const deletedComment = await comment.findOneAndUpdate(
+      { _id: id, userid },
+      { $set: { isDeleted: true, deletedAt: new Date() } },
+      { new: true },
+    );
+
+    if (!deletedComment) {
+      const existingComment = await comment.findById(id).select("_id");
+      return res.status(existingComment ? 403 : 404).json({
+        message: existingComment ? "You can only delete your own comments" : "Comment not found",
+      });
+    }
 
     return res.status(200).json({
-      message: "Comment and replies deleted successfully",
+      message: "Comment deleted successfully",
       comment: deletedComment,
     });
   } catch (error) {
@@ -148,41 +175,80 @@ export const deletecomment = async (req, res) => {
 
 export const editcomment = async (req, res) => {
   const { id } = req.params;
-  const { commentbody } = req.body;
+  const { commentbody, userid, expectedUpdatedAt } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid comment ID" });
   }
 
-  if (typeof commentbody !== "string" || !commentbody.trim()) {
-    return res.status(400).json({
-      message: "Comment cannot be empty",
-    });
+  if (!mongoose.Types.ObjectId.isValid(userid)) {
+    return res.status(400).json({ message: "Invalid user ID" });
   }
 
-  if (commentbody.length > 2000) {
+  const validation = filterCommentText(commentbody);
+  if (!validation.valid) {
     return res.status(400).json({
-      message: "Comment cannot exceed 2000 characters",
+      message: validation.message,
     });
   }
 
   try {
-    const updatedComment = await comment.findByIdAndUpdate(
-      id,
+    const existingComment = await comment.findOne({
+      _id: id,
+      userid,
+      isDeleted: { $ne: true },
+    });
+    if (!existingComment) {
+      const foundComment = await comment.findById(id).select("_id userid");
+      return res.status(foundComment ? 403 : 404).json({
+        message: foundComment ? "You can only edit your own comments" : "Comment not found",
+      });
+    }
+
+    const editWindowMs = 15 * 60 * 1000;
+    const commentCreatedAt = existingComment.createdAt || existingComment.commentedon;
+    if (!commentCreatedAt || Date.now() - commentCreatedAt.getTime() > editWindowMs) {
+      return res.status(403).json({ message: "The 15-minute edit window has expired" });
+    }
+
+    if (
+      !expectedUpdatedAt ||
+      !Number.isFinite(new Date(expectedUpdatedAt).getTime())
+    ) {
+      return res.status(400).json({ message: "Comment version is required" });
+    }
+
+    if (
+      existingComment.updatedAt?.getTime() !==
+      new Date(expectedUpdatedAt).getTime()
+    ) {
+      return res.status(409).json({
+        message: "This comment changed since you opened it. Reload and try again.",
+      });
+    }
+
+    const updatedComment = await comment.findOneAndUpdate(
       {
-        $set: {
-          commentbody: commentbody.trim(),
-        },
+        _id: id,
+        userid,
+        updatedAt: existingComment.updatedAt,
+        isDeleted: { $ne: true },
       },
       {
-        new: true,
-        runValidators: true,
-      }
+        $set: { commentbody: validation.text },
+        $push: {
+          editHistory: {
+            commentbody: existingComment.commentbody,
+            editedAt: new Date(),
+          },
+        },
+      },
+      { new: true, runValidators: true },
     );
 
     if (!updatedComment) {
-      return res.status(404).json({
-        message: "Comment not found",
+      return res.status(409).json({
+        message: "This comment changed since you opened it. Reload and try again.",
       });
     }
 
@@ -212,6 +278,11 @@ export const voteComment = async (req, res) => {
   }
 
   try {
+    const targetComment = await comment.findById(commentid).select("isDeleted");
+    if (!targetComment || targetComment.isDeleted) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
     const existingVote = await commentVote.findOne({
       commentid,
       userid,
@@ -320,6 +391,9 @@ if (!validation.valid) {
     if (!originalComment) {
       return res.status(404).json({ message: "Comment not found" });
     }
+    if (originalComment.isDeleted) {
+      return res.status(410).json({ message: "Cannot reply to a deleted comment" });
+    }
 
     const newReply = await reply.create({
       commentid,
@@ -381,16 +455,23 @@ return res.status(200).json(formattedReplies);
 
 export const deleteReply = async (req, res) => {
   const { id } = req.params;
+  const { userid } = req.body;
 
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid reply ID" });
+  if (
+    !mongoose.Types.ObjectId.isValid(id) ||
+    !mongoose.Types.ObjectId.isValid(userid)
+  ) {
+    return res.status(400).json({ message: "Invalid reply or user ID" });
   }
 
   try {
-    const deletedReply = await reply.findByIdAndDelete(id);
+    const deletedReply = await reply.findOneAndDelete({ _id: id, userid });
 
     if (!deletedReply) {
-      return res.status(404).json({ message: "Reply not found" });
+      const existingReply = await reply.findById(id).select("_id");
+      return res.status(existingReply ? 403 : 404).json({
+        message: existingReply ? "You can only delete your own replies" : "Reply not found",
+      });
     }
 
     return res.status(200).json({ success: true });

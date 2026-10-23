@@ -14,6 +14,14 @@ const commentschema = mongoose.Schema(
     commentbody: { type: String },
     usercommented: { type: String },
     commentedon: { type: Date, default: Date.now },
+    editHistory: [
+      {
+        commentbody: { type: String, required: true },
+        editedAt: { type: Date, default: Date.now },
+      },
+    ],
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
   },
   {
     timestamps: true,
