@@ -42,6 +42,12 @@ const Header = () => {
   const [securityError, setSecurityError] = useState("");
   const router = useRouter();
   const { theme } = useTheme();
+  const adminEmails = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+  const isConfiguredAdmin =
+    user?.email && adminEmails.includes(user.email.trim().toLowerCase());
 
   const handleVerifyLogin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -138,6 +144,13 @@ const Header = () => {
                 <DropdownMenuItem render={<Link href="/account/security" />}>
                   Account security
                 </DropdownMenuItem>
+                {isConfiguredAdmin && (
+                  <DropdownMenuItem
+                    render={<Link href="/admin/comments" />}
+                  >
+                    Comment moderation
+                  </DropdownMenuItem>
+                )}
                 {user?.channelname ? (
                   <DropdownMenuItem
                     render={<Link href={`/channel/${user?._id}`} />}

@@ -18,6 +18,7 @@ interface LoginRecord {
   city: string;
   state: string;
   country: string;
+  approximateLocation: string;
   status: string;
   createdAt: string;
 }
@@ -146,6 +147,12 @@ export default function AccountSecurityPage() {
                         .filter((place) => place && place !== "Unavailable")
                         .join(", ") || "Location unavailable"}
                     </p>
+                    {record.approximateLocation &&
+                      record.approximateLocation !== "Unavailable" && (
+                        <p className="text-xs text-muted-foreground">
+                          Approximate location: {record.approximateLocation}
+                        </p>
+                      )}
                     <p className="text-xs text-muted-foreground">
                       {new Date(record.createdAt).toLocaleString()}
                     </p>

@@ -79,7 +79,7 @@ export const getTrustedCookieToken = (req) => {
   return token;
 };
 
-export const findMatchingTrustedDevice = async (req, userId, currentCity) => {
+export const findMatchingTrustedDevice = async (req, userId, currentLocation) => {
   const token = getTrustedCookieToken(req);
   if (!token) return null;
 
@@ -97,7 +97,8 @@ export const findMatchingTrustedDevice = async (req, userId, currentCity) => {
     trusted.deviceType !== device.deviceType ||
     trusted.deviceModel !== device.deviceModel ||
     trusted.ipAddress !== device.ipAddress ||
-    (currentCity && trusted.city !== currentCity)
+    (currentLocation?.city && trusted.city !== currentLocation.city) ||
+    (currentLocation?.state && trusted.state !== currentLocation.state)
   ) {
     return null;
   }

@@ -20,6 +20,9 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { useUser } from "@/lib/AuthContext";
+import axiosInstance from "@/lib/axiosinstance";
+import { auth } from "@/lib/firebase";
 import { getVideoUrl } from "@/lib/videoUrl";
 
 const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2];
@@ -52,7 +55,17 @@ interface SavedProgress {
   completed: boolean;
 }
 
-const progressStorageKey = (videoId: string) => `watch-progress:${videoId}`;
+interface RemoteProgressState {
+  userId: string | undefined;
+  videoId: string;
+  loaded: boolean;
+  progress: SavedProgress | null;
+}
+
+const progressStorageKey = (videoId: string, userId?: string) =>
+  userId
+    ? `watch-progress:${userId}:${videoId}`
+    : `watch-progress:${videoId}`;
 
 const formatTime = (seconds: number) => {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -73,13 +86,31 @@ export default function VideoPlayer({
   completionWatchPercentage = COMPLETION_WATCH_PERCENTAGE,
 }: VideoPlayerProps) {
   const router = useRouter();
+  const { user } = useUser();
   const playerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedAt = useRef(0);
-  const restoredProgress = useRef(false);
+  const restoredProgressKey = useRef<string | null>(null);
+  const restoredProgressData = useRef<SavedProgress | null>(null);
   const completedRef = useRef(false);
+  const [metadataReady, setMetadataReady] = useState(false);
+  const [remoteProgressState, setRemoteProgressState] =
+    useState<RemoteProgressState>({
+      userId: user?._id,
+      videoId: video._id,
+      loaded: !user?._id,
+      progress: null,
+    });
+  const remoteProgressMatches =
+    remoteProgressState.userId === user?._id &&
+    remoteProgressState.videoId === video._id;
+  const remoteProgress = remoteProgressMatches
+    ? remoteProgressState.progress
+    : null;
+  const remoteProgressLoaded =
+    !user?._id || (remoteProgressMatches && remoteProgressState.loaded);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -109,13 +140,33 @@ export default function VideoPlayer({
       try {
         completedRef.current ||= completed;
         const progress = { position, completed: completedRef.current };
-        localStorage.setItem(progressStorageKey(video._id), JSON.stringify(progress));
+        localStorage.setItem(
+          progressStorageKey(video._id, user?._id),
+          JSON.stringify(progress),
+        );
         setSavedProgress(progress);
       } catch (storageError) {
         console.error("Unable to save video watch progress:", storageError);
       }
+
+      if (user?._id) {
+        void (async () => {
+          const firebaseUser = auth.currentUser;
+          if (!firebaseUser) {
+            throw new Error("The signed-in Firebase user is unavailable.");
+          }
+          const idToken = await firebaseUser.getIdToken();
+          await axiosInstance.put(
+            `/video/progress/${video._id}`,
+            { position, completed: completedRef.current },
+            { headers: { Authorization: `Bearer ${idToken}` } },
+          );
+        })().catch((saveError: unknown) => {
+          console.error("Unable to sync video watch progress:", saveError);
+        });
+      }
     },
-    [video._id],
+    [user, video._id],
   );
 
   const seekTo = useCallback((time: number) => {
@@ -199,6 +250,94 @@ export default function VideoPlayer({
   }, [playing]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!user?._id) return;
+
+    const userId = user._id;
+    void (async () => {
+      try {
+        const firebaseUser = auth.currentUser;
+        if (!firebaseUser) {
+          throw new Error("The signed-in Firebase user is unavailable.");
+        }
+        const idToken = await firebaseUser.getIdToken();
+        const response = await axiosInstance.get<{ progress: SavedProgress | null }>(
+          `/video/progress/${video._id}`,
+          { headers: { Authorization: `Bearer ${idToken}` } },
+        );
+        if (!cancelled) {
+          setRemoteProgressState({
+            userId,
+            videoId: video._id,
+            loaded: true,
+            progress: response.data.progress,
+          });
+        }
+      } catch (loadError: unknown) {
+        console.error("Unable to load synced video watch progress:", loadError);
+        if (!cancelled) {
+          setRemoteProgressState({
+            userId,
+            videoId: video._id,
+            loaded: true,
+            progress: null,
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setRemoteProgressState((current) =>
+            current.userId === userId && current.videoId === video._id
+              ? { ...current, loaded: true }
+              : current,
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, video._id]);
+
+  useEffect(() => {
+    const restoreKey = `${user?._id || "anonymous"}:${video._id}`;
+    if (
+      !metadataReady ||
+      !remoteProgressLoaded ||
+      restoredProgressKey.current === restoreKey
+    ) {
+      return;
+    }
+    const player = videoRef.current;
+    if (!player) return;
+
+    try {
+      let localProgress: SavedProgress | null = null;
+      const stored = localStorage.getItem(
+        progressStorageKey(video._id, user?._id),
+      );
+      if (stored) localProgress = JSON.parse(stored) as SavedProgress;
+
+      const progress = remoteProgress || localProgress;
+      restoredProgressKey.current = restoreKey;
+      if (progress) {
+        completedRef.current = Boolean(progress.completed);
+        if (
+          Number.isFinite(progress.position) &&
+          progress.position > 0 &&
+          progress.position < player.duration - 1
+        ) {
+          restoredProgressData.current = progress;
+          player.currentTime = progress.position;
+        }
+      }
+    } catch (storageError) {
+      restoredProgressKey.current = restoreKey;
+      console.error("Unable to restore video watch progress:", storageError);
+    }
+  }, [metadataReady, remoteProgress, remoteProgressLoaded, user?._id, video._id]);
+
+  useEffect(() => {
     const player = videoRef.current;
     if (!player) return;
 
@@ -209,27 +348,7 @@ export default function VideoPlayer({
           ? `${player.videoWidth}×${player.videoHeight}`
           : "",
       );
-      if (!restoredProgress.current) {
-        restoredProgress.current = true;
-        try {
-          const stored = localStorage.getItem(progressStorageKey(video._id));
-          if (stored) {
-            const progress = JSON.parse(stored) as SavedProgress;
-            completedRef.current = Boolean(progress.completed);
-            if (
-              Number.isFinite(progress.position) &&
-              progress.position > 0 &&
-              progress.position < player.duration - 1
-            ) {
-              player.currentTime = progress.position;
-              setCurrentTime(progress.position);
-              setSavedProgress(progress);
-            }
-          }
-        } catch (storageError) {
-          console.error("Unable to restore video watch progress:", storageError);
-        }
-      }
+      setMetadataReady(true);
       setLoading(false);
     };
     const onTimeUpdate = () => {
@@ -239,9 +358,19 @@ export default function VideoPlayer({
         : 0;
       if (percentage >= completionThreshold && !completedRef.current) {
         saveProgress(player.currentTime, true);
-      } else if (Date.now() - lastSavedAt.current >= PROGRESS_SAVE_INTERVAL_MS) {
+      } else if (
+        !completedRef.current &&
+        Date.now() - lastSavedAt.current >= PROGRESS_SAVE_INTERVAL_MS
+      ) {
         lastSavedAt.current = Date.now();
         saveProgress(player.currentTime, false);
+      }
+    };
+    const onSeeked = () => {
+      setCurrentTime(player.currentTime);
+      if (restoredProgressData.current) {
+        setSavedProgress(restoredProgressData.current);
+        restoredProgressData.current = null;
       }
     };
     const onProgress = () => {
@@ -275,6 +404,7 @@ export default function VideoPlayer({
 
     player.addEventListener("loadedmetadata", onLoadedMetadata);
     player.addEventListener("timeupdate", onTimeUpdate);
+    player.addEventListener("seeked", onSeeked);
     player.addEventListener("progress", onProgress);
     player.addEventListener("play", onPlay);
     player.addEventListener("pause", onPause);
@@ -286,6 +416,7 @@ export default function VideoPlayer({
     return () => {
       player.removeEventListener("loadedmetadata", onLoadedMetadata);
       player.removeEventListener("timeupdate", onTimeUpdate);
+      player.removeEventListener("seeked", onSeeked);
       player.removeEventListener("progress", onProgress);
       player.removeEventListener("play", onPlay);
       player.removeEventListener("pause", onPause);

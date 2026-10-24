@@ -154,7 +154,7 @@ export const UserProvider = ({ children }) => {
     setAuthError("");
     setIsSigningIn(true);
     const shareLocation = window.confirm(
-      "Share your location to save your city or village to your profile? It may appear with your comments. Coordinates are sent to OpenStreetMap Nominatim for lookup; only the place name is saved.",
+      "Share your approximate location? Your coordinates will be sent to OpenStreetMap Nominatim to look up your city, state, country, and approximate address. The city may appear with your comments; location details are saved in sign-in security history.",
     );
     const requestedLocation = shareLocation
       ? requestBrowserCoordinates()

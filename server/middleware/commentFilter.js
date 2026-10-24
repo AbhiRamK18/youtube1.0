@@ -11,25 +11,53 @@ const onlySymbolsPattern = /^[\p{P}\p{S}\s]+$/u;
 const repeatedEmojiPattern =
   /(?:\p{Extended_Pictographic}[\uFE0F\uFE0E]?(?:\u200D\p{Extended_Pictographic}[\uFE0F\uFE0E]?)*){6,}/u;
 
-// Configurable abusive-word list.
-// Add appropriate terms in English, Telugu, Hindi, and other languages.
-// These are illustrative entries; expand and review the list for your needs.
-const abusiveWords = [
+const urlPattern = /\b(?:https?:\/\/|www\.)\S+/giu;
+const dangerousSchemePattern = /(?:javascript|data|vbscript):/iu;
+const suspiciousShortenerPattern =
+  /(?:https?:\/\/)?(?:www\.)?(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly)\//iu;
+const unsafeIpPattern =
+  /^(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/u;
+const configuredAbusiveWords = () => [
   "fuck",
   "bitch",
   "bastard",
+  ...(process.env.COMMENT_ABUSIVE_WORDS || "")
+    .split(",")
+    .map((word) => word.trim().normalize("NFKC").toLowerCase())
+    .filter(Boolean),
 ];
 
-// Detect URLs and dangerous URL schemes.
-const urlPattern = /\b(?:https?:\/\/|www\.)\S+/giu;
+const configuredBlockedDomains = () =>
+  (process.env.COMMENT_BLOCKED_DOMAINS || "")
+  .split(",")
+  .map((domain) => domain.trim().toLowerCase().replace(/^www\./, ""))
+  .filter(Boolean);
 
-const dangerousSchemePattern =
-  /(?:javascript|data|vbscript):/iu;
+const containsUnsafeLink = (text) => {
+  const links = [...text.matchAll(urlPattern)];
+  if (links.length > 3) return true;
+  const blockedDomains = configuredBlockedDomains();
 
-// Common URL-shortening services sometimes used to hide destinations.
-// This is a basic heuristic, not proof that a link is malicious.
-const suspiciousShortenerPattern =
-  /(?:https?:\/\/)?(?:www\.)?(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly)\//iu;
+  return links.some((match) => {
+    try {
+      const value = match[0].startsWith("www.") ? `https://${match[0]}` : match[0];
+      const parsedUrl = new URL(value);
+      const hostname = parsedUrl.hostname.toLowerCase().replace(/^www\./, "");
+      return (
+        Boolean(parsedUrl.username || parsedUrl.password) ||
+        hostname === "localhost" ||
+        hostname === "0.0.0.0" ||
+        hostname === "::1" ||
+        unsafeIpPattern.test(hostname) ||
+        blockedDomains.some(
+          (domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+        )
+      );
+    } catch {
+      return true;
+    }
+  });
+};
 
 export const filterCommentText = (text) => {
   if (typeof text !== "string") {
@@ -76,15 +104,29 @@ export const filterCommentText = (text) => {
     };
   }
 
-  // Check for dangerous URL schemes.
-  if (dangerousSchemePattern.test(trimmedText)) {
+  const meaningfulCharacterCount = [...trimmedText].filter((character) =>
+    /[\p{L}\p{N}]/u.test(character),
+  ).length;
+  if (
+    [...trimmedText].length >= 20 &&
+    meaningfulCharacterCount / [...trimmedText].length < 0.35
+  ) {
     return {
       valid: false,
-      message: "Your comment contains an unsafe link.",
+      message: "Please avoid comments made mostly of repeated symbols or emojis.",
     };
   }
 
-  // Check for links from commonly used URL shorteners.
+  if (
+    dangerousSchemePattern.test(trimmedText) ||
+    containsUnsafeLink(trimmedText)
+  ) {
+    return {
+      valid: false,
+      message: "Your comment contains an unsafe or blocked link.",
+    };
+  }
+
   if (suspiciousShortenerPattern.test(trimmedText)) {
     return {
       valid: false,
@@ -93,9 +135,25 @@ export const filterCommentText = (text) => {
   }
 
   // Check for configured abusive words.
-  const normalizedText = trimmedText.toLowerCase();
+  const normalizedText = trimmedText
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[013457@$!]/g, (character) => {
+      const substitutions = {
+        "0": "o",
+        "1": "i",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+        "@": "a",
+        "$": "s",
+        "!": "i",
+      };
+      return substitutions[character];
+    });
 
-  const containsAbusiveWord = abusiveWords.some((word) => {
+  const containsAbusiveWord = configuredAbusiveWords().some((word) => {
     const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const wordPattern = new RegExp(

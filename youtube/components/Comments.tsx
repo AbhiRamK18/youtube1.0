@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { formatDistanceToNow } from "date-fns";
 import { useUser } from "@/lib/AuthContext";
 import axiosInstance from "@/lib/axiosinstance";
+import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
 interface Comment {
   _id: string;
   videoid: string;
@@ -138,6 +139,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
     | "harassment"
     | "hate_speech"
     | "inappropriate_content"
+    | "offensive_content"
     | "misinformation"
     | "dangerous_links"
     | "other";
@@ -245,11 +247,10 @@ const Comments = ({ videoId }: { videoId: string }) => {
     try {
       const res = await axiosInstance.post("/comment/postcomment", {
         videoid: videoId,
-        userid: user._id,
         commentbody: newComment,
         usercommented: user.channelname || user.name,
         ...(captchaAnswer ? { captchaAnswer } : {}),
-      });
+      }, await getFirebaseAuthConfig());
       if (res.data.comment) {
         const created = res.data.data;
         const newCommentObj: Comment = {
@@ -304,11 +305,11 @@ const Comments = ({ videoId }: { videoId: string }) => {
         `/comment/editcomment/${editingCommentId}`,
         {
           commentbody: editText,
-          userid: user?._id,
           expectedUpdatedAt: comments.find(
             (comment) => comment._id === editingCommentId,
           )?.updatedAt,
         },
+        await getFirebaseAuthConfig(),
       );
       if (res.data) {
         setComments((prev) =>
@@ -338,9 +339,10 @@ const Comments = ({ videoId }: { videoId: string }) => {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await axiosInstance.delete(`/comment/deletecomment/${id}`, {
-        data: { userid: user?._id },
-      });
+      const res = await axiosInstance.delete(
+        `/comment/deletecomment/${id}`,
+        await getFirebaseAuthConfig(),
+      );
       if (res.data.comment) {
         setComments((prev) =>
           prev.map((comment) =>
@@ -363,9 +365,8 @@ const Comments = ({ videoId }: { videoId: string }) => {
 
     try {
       const res = await axiosInstance.post(`/comment/vote/${commentId}`, {
-        userid: user._id,
         vote,
-      });
+      }, await getFirebaseAuthConfig());
 
       setVoteData((prev) => ({
         ...prev,
@@ -403,11 +404,9 @@ const Comments = ({ videoId }: { videoId: string }) => {
     setCommentError("");
     try {
       const res = await axiosInstance.post(`/comment/${commentId}/replies`, {
-        userid: user._id,
-        userreplied: user.channelname || user.name || "Anonymous",
         replybody: replyText.trim(),
         ...(captchaAnswer ? { captchaAnswer } : {}),
-      });
+      }, await getFirebaseAuthConfig());
 
       setReplies((prev) => ({
         ...prev,
@@ -454,9 +453,10 @@ const Comments = ({ videoId }: { videoId: string }) => {
   };
   const handleDeleteReply = async (commentId: string, replyId: string) => {
     try {
-      await axiosInstance.delete(`/comment/reply/${replyId}`, {
-        data: { userid: user?._id },
-      });
+      await axiosInstance.delete(
+        `/comment/reply/${replyId}`,
+        await getFirebaseAuthConfig(),
+      );
 
       setReplies((prev) => ({
         ...prev,
@@ -479,10 +479,9 @@ const Comments = ({ videoId }: { videoId: string }) => {
     try {
       await axiosInstance.post("/comment/report", {
         commentid: commentId,
-        reporterid: user._id,
         reason: reportReason,
         details: reportDetails.trim(),
-      });
+      }, await getFirebaseAuthConfig());
 
       setReportMessages((prev) => ({
         ...prev,
@@ -750,9 +749,12 @@ const Comments = ({ videoId }: { videoId: string }) => {
                   )}
                 </div>
                 {expandedHistoryId === comment._id && !!comment.editHistory?.length && (
-                  <div className="mb-2 space-y-1 rounded bg-gray-50 p-2 text-xs text-gray-600">
+                  <div className="mb-2 space-y-1 rounded bg-muted p-2 text-xs text-muted-foreground">
                     {[...comment.editHistory].reverse().map((version, index) => (
                       <p key={`${version.editedAt}-${index}`}>
+                        <span className="mr-2 font-medium">
+                          {new Date(version.editedAt).toLocaleString()}
+                        </span>
                         {version.commentbody}
                       </p>
                     ))}
@@ -1014,6 +1016,9 @@ const Comments = ({ videoId }: { videoId: string }) => {
                           <option value="inappropriate_content">
                             Inappropriate content
                           </option>
+                          <option value="offensive_content">
+                            Offensive content
+                          </option>
                           <option value="misinformation">Misinformation</option>
                           <option value="dangerous_links">
                             Dangerous links
@@ -1203,7 +1208,10 @@ const Comments = ({ videoId }: { videoId: string }) => {
                           </p>
 
                           {reply.createdAt && (
-                            <p className="mt-1 text-xs text-gray-500">
+                            <p
+                              className="mt-1 text-xs text-muted-foreground"
+                              title={new Date(reply.createdAt).toLocaleString()}
+                            >
                               {formatDistanceToNow(new Date(reply.createdAt), {
                                 addSuffix: true,
                               })}
@@ -1213,13 +1221,11 @@ const Comments = ({ videoId }: { videoId: string }) => {
                       ))}
                     </div>
 
-                    {comment.userid === user?._id && !comment.isDeleted && (
+                    {comment.userid === user?._id &&
+                      !comment.isDeleted &&
+                      comment.canEdit && (
                       <div className="flex gap-2 mt-2 text-sm text-gray-500">
-                        {comment.canEdit && (
-                          <button onClick={() => handleEdit(comment)}>
-                            Edit
-                          </button>
-                        )}
+                        <button onClick={() => handleEdit(comment)}>Edit</button>
                         <button onClick={() => handleDelete(comment._id)}>
                           Delete
                         </button>

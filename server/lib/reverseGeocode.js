@@ -58,8 +58,20 @@ export const getCityFromCoordinates = async (coordinates) => {
       address.hamlet ||
       address.municipality ||
       address.locality;
-    const location = typeof city === "string" ? city.trim().slice(0, 100) : "";
-    return location || null;
+    const location = {
+      city: typeof city === "string" ? city.trim().slice(0, 100) : "",
+      state:
+        typeof address.state === "string" ? address.state.trim().slice(0, 100) : "",
+      country:
+        typeof address.country === "string"
+          ? address.country.trim().slice(0, 100)
+          : "",
+      approximateLocation:
+        typeof result.display_name === "string"
+          ? result.display_name.trim().slice(0, 250)
+          : "",
+    };
+    return Object.values(location).some(Boolean) ? location : null;
   } catch (error) {
     console.error("OpenStreetMap location lookup failed:", error);
     return null;

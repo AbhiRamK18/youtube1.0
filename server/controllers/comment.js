@@ -5,13 +5,11 @@ import reply from "../Modals/reply.js";
 import { filterCommentText } from "../middleware/commentFilter.js";
 
 export const postcomment = async (req, res) => {
-  const { commentbody, userid, videoid } = req.body;
+  const { commentbody, videoid } = req.body;
+  const userid = req.authenticatedUser._id;
 
-  if (
-    !mongoose.Types.ObjectId.isValid(userid) ||
-    !mongoose.Types.ObjectId.isValid(videoid)
-  ) {
-    return res.status(400).json({ message: "Invalid user or video ID" });
+  if (!mongoose.Types.ObjectId.isValid(videoid)) {
+    return res.status(400).json({ message: "Invalid video ID" });
   }
 
   const validation = filterCommentText(commentbody);
@@ -58,9 +56,7 @@ export const postcomment = async (req, res) => {
       videoid,
       commentbody: validation.text,
       usercommented:
-        typeof req.body.usercommented === "string"
-          ? req.body.usercommented.trim().slice(0, 100)
-          : "",
+        req.authenticatedUser.channelname || req.authenticatedUser.name || "",
     });
     await newComment.save();
 
@@ -144,22 +140,30 @@ export const deletecomment = async (req, res) => {
   }
 
   try {
-    const { userid } = req.body;
-    if (!mongoose.Types.ObjectId.isValid(userid)) {
-      return res.status(400).json({ message: "Invalid user ID" });
+    const userid = req.authenticatedUser._id;
+    const existingComment = await comment.findById(id);
+    if (!existingComment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+    if (existingComment.userid.toString() !== userid.toString()) {
+      return res.status(403).json({ message: "You can only delete your own comments" });
+    }
+    if (existingComment.isDeleted) {
+      return res.status(410).json({ message: "Comment has already been deleted" });
+    }
+    const createdAt = existingComment.createdAt || existingComment.commentedon;
+    if (!createdAt || Date.now() - createdAt.getTime() > 15 * 60 * 1000) {
+      return res.status(403).json({ message: "The 15-minute delete window has expired" });
     }
 
     const deletedComment = await comment.findOneAndUpdate(
-      { _id: id, userid },
+      { _id: id, userid, updatedAt: existingComment.updatedAt, isDeleted: { $ne: true } },
       { $set: { isDeleted: true, deletedAt: new Date() } },
       { new: true },
     );
 
     if (!deletedComment) {
-      const existingComment = await comment.findById(id).select("_id");
-      return res.status(existingComment ? 403 : 404).json({
-        message: existingComment ? "You can only delete your own comments" : "Comment not found",
-      });
+      return res.status(409).json({ message: "Comment changed. Reload and try again." });
     }
 
     return res.status(200).json({
@@ -175,14 +179,11 @@ export const deletecomment = async (req, res) => {
 
 export const editcomment = async (req, res) => {
   const { id } = req.params;
-  const { commentbody, userid, expectedUpdatedAt } = req.body;
+  const { commentbody, expectedUpdatedAt } = req.body;
+  const userid = req.authenticatedUser._id;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid comment ID" });
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(userid)) {
-    return res.status(400).json({ message: "Invalid user ID" });
   }
 
   const validation = filterCommentText(commentbody);
@@ -264,13 +265,11 @@ export const editcomment = async (req, res) => {
 
 export const voteComment = async (req, res) => {
   const { commentid } = req.params;
-  const { userid, vote } = req.body;
+  const { vote } = req.body;
+  const userid = req.authenticatedUser._id;
 
-  if (
-    !mongoose.Types.ObjectId.isValid(commentid) ||
-    !mongoose.Types.ObjectId.isValid(userid)
-  ) {
-    return res.status(400).json({ message: "Invalid comment or user ID" });
+  if (!mongoose.Types.ObjectId.isValid(commentid)) {
+    return res.status(400).json({ message: "Invalid comment ID" });
   }
 
   if (!["like", "dislike"].includes(vote)) {
@@ -363,7 +362,8 @@ export const getCommentVotes = async (req, res) => {
 
 export const addReply = async (req, res) => {
   const { commentid } = req.params;
-  const { userid, userreplied, replybody } = req.body;
+  const { replybody } = req.body;
+  const userid = req.authenticatedUser._id;
   const validation = filterCommentText(replybody);
 
 if (!validation.valid) {
@@ -372,11 +372,8 @@ if (!validation.valid) {
   });
 }
 
-  if (
-    !mongoose.Types.ObjectId.isValid(commentid) ||
-    !mongoose.Types.ObjectId.isValid(userid)
-  ) {
-    return res.status(400).json({ message: "Invalid comment or user ID" });
+  if (!mongoose.Types.ObjectId.isValid(commentid)) {
+    return res.status(400).json({ message: "Invalid comment ID" });
   }
 
   if (!replybody || !replybody.trim()) {
@@ -398,7 +395,10 @@ if (!validation.valid) {
     const newReply = await reply.create({
       commentid,
       userid,
-      userreplied: userreplied || "Anonymous",
+      userreplied:
+        req.authenticatedUser.channelname ||
+        req.authenticatedUser.name ||
+        "Anonymous",
       replybody: validation.text,
       
     });
@@ -455,13 +455,10 @@ return res.status(200).json(formattedReplies);
 
 export const deleteReply = async (req, res) => {
   const { id } = req.params;
-  const { userid } = req.body;
+  const userid = req.authenticatedUser._id;
 
-  if (
-    !mongoose.Types.ObjectId.isValid(id) ||
-    !mongoose.Types.ObjectId.isValid(userid)
-  ) {
-    return res.status(400).json({ message: "Invalid reply or user ID" });
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid reply ID" });
   }
 
   try {

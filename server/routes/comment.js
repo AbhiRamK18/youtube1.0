@@ -16,18 +16,41 @@ import {
   commentRateLimit,
   replyRateLimit,
 } from "../middleware/commentRateLimit.js";
-import { reportComment } from "../controllers/commentReport.js";
+import {
+  getCommentReports,
+  moderateCommentReport,
+  reportComment,
+} from "../controllers/commentReport.js";
+import { requireFirebaseUser } from "../middleware/requireFirebaseUser.js";
+import { requireAdminUser } from "../middleware/requireAdminUser.js";
 
 const routes = express.Router();
-routes.post("/report", reportComment);
+routes.get(
+  "/admin/reports",
+  requireFirebaseUser,
+  requireAdminUser,
+  getCommentReports,
+);
+routes.patch(
+  "/admin/reports/:reportId",
+  requireFirebaseUser,
+  requireAdminUser,
+  moderateCommentReport,
+);
+routes.post("/report", requireFirebaseUser, reportComment);
 routes.get("/:videoid", getallcomment);
-routes.post("/postcomment", commentRateLimit, postcomment);
-routes.delete("/deletecomment/:id", deletecomment);
-routes.post("/editcomment/:id", editcomment);
-routes.post("/vote/:commentid", voteComment);
+routes.post("/postcomment", requireFirebaseUser, commentRateLimit, postcomment);
+routes.delete("/deletecomment/:id", requireFirebaseUser, deletecomment);
+routes.post("/editcomment/:id", requireFirebaseUser, editcomment);
+routes.post("/vote/:commentid", requireFirebaseUser, voteComment);
 routes.get("/votes/:videoid", getCommentVotes);
-routes.post("/:commentid/replies", replyRateLimit, addReply);
+routes.post(
+  "/:commentid/replies",
+  requireFirebaseUser,
+  replyRateLimit,
+  addReply,
+);
 routes.get("/:commentid/replies", getReplies);
-routes.delete("/reply/:id", deleteReply);
+routes.delete("/reply/:id", requireFirebaseUser, deleteReply);
 routes.post("/translate", translateComment);
 export default routes;

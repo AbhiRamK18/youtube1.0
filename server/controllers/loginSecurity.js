@@ -113,9 +113,13 @@ export const beginLogin = async (req, res) => {
     }
 
     const device = parseLoginDevice(req);
-    const city = await getCityFromCoordinates(req.body.locationCoordinates);
-    if (city) device.city = city;
-    const trusted = await findMatchingTrustedDevice(req, user._id, city);
+    const location = await getCityFromCoordinates(req.body.locationCoordinates);
+    if (location) {
+      for (const [key, value] of Object.entries(location)) {
+        if (value) device[key] = value;
+      }
+    }
+    const trusted = await findMatchingTrustedDevice(req, user._id, location);
 
     if (trusted) {
       trusted.lastUsedAt = new Date();

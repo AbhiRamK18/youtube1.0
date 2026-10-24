@@ -25,6 +25,7 @@ const commentReportSchema = new mongoose.Schema(
         "harassment",
         "hate_speech",
         "inappropriate_content",
+        "offensive_content",
         "misinformation",
         "dangerous_links",
         "other",
