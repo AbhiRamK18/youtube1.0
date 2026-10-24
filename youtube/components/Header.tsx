@@ -1,5 +1,5 @@
 "use client";
-import { Bell, Menu, Mic, Search, User, VideoIcon } from "lucide-react";
+import { Bell, Menu, Mic, Moon, Search, Sun, User, VideoIcon } from "lucide-react";
 import React, { useState } from "react";
 import { Button } from "./ui/button";
 import Link from "next/link";
@@ -15,9 +15,21 @@ import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import Channeldialogue from "./channeldialogue";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/lib/AuthContext";
+import { useTheme } from "next-themes";
+import { toast } from "sonner";
 
 const Header = () => {
-  const { user, logout, handlegooglesignin } = useUser();
+  const {
+    user,
+    logout,
+    handlegooglesignin,
+    pendingVerification,
+    verifyLogin,
+    resendLoginCode,
+    authError,
+    isSigningIn,
+    changeThemePreference,
+  } = useUser();
   // const user: any = {
   //   id: "1",
   //   name: "John Doe",
@@ -26,20 +38,35 @@ const Header = () => {
   // };
   const [searchQuery, setSearchQuery] = useState("");
   const [isdialogeopen, setisdialogeopen] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [securityError, setSecurityError] = useState("");
   const router = useRouter();
+  const { theme } = useTheme();
+
+  const handleVerifyLogin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSecurityError("");
+    const verified = await verifyLogin(verificationCode);
+    if (!verified) setSecurityError(authError || "The code could not be verified.");
+  };
+
+  const handleThemeChange = async () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    try {
+      await changeThemePreference(nextTheme);
+    } catch (error) {
+      console.error("Unable to save theme preference:", error);
+      toast.error("Unable to save your theme preference. Please retry.");
+    }
+  };
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
     }
   };
-  const handleKeypress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleSearch(e as any);
-    }
-  };
   return (
-    <header className="flex items-center justify-between px-4 py-2 bg-white border-b">
+    <header className="flex items-center justify-between px-4 py-2 bg-background border-b">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon">
           <Menu className="w-6 h-6" />
@@ -63,7 +90,6 @@ const Header = () => {
             type="search"
             placeholder="Search"
             value={searchQuery}
-            onKeyPress={handleKeypress}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="rounded-l-full border-r-0 focus-visible:ring-0"
           />
@@ -102,6 +128,16 @@ const Header = () => {
                 </Avatar>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56" align="end">
+                <DropdownMenuItem onClick={() => void handleThemeChange()}>
+                  {theme === "dark" ? (
+                    <><Sun className="mr-2 h-4 w-4" /> Switch to light theme</>
+                  ) : (
+                    <><Moon className="mr-2 h-4 w-4" /> Switch to dark theme</>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem render={<Link href="/account/security" />}>
+                  Account security
+                </DropdownMenuItem>
                 {user?.channelname ? (
                   <DropdownMenuItem
                     render={<Link href={`/channel/${user?._id}`} />}
@@ -139,10 +175,16 @@ const Header = () => {
             <Button
               className="flex items-center gap-2"
               onClick={handlegooglesignin}
+              disabled={isSigningIn}
             >
               <User className="w-4 h-4" />
-              Sign in
+              {isSigningIn ? "Signing in..." : "Sign in"}
             </Button>
+            {authError && !pendingVerification && (
+              <p role="alert" className="max-w-56 text-xs text-red-600">
+                {authError}
+              </p>
+            )}
           </>
         )}{" "}
       </div>
@@ -151,6 +193,51 @@ const Header = () => {
         onclose={() => setisdialogeopen(false)}
         mode="create"
       />
+      {pendingVerification && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+          <form
+            onSubmit={handleVerifyLogin}
+            className="w-full max-w-md space-y-4 rounded-xl bg-background p-6 text-foreground shadow-xl"
+          >
+            <h2 className="text-lg font-semibold">Verify this sign-in</h2>
+            <p className="text-sm text-muted-foreground">
+              Enter the 6-digit code sent to {pendingVerification.email}.
+            </p>
+            <Input
+              aria-label="Email verification code"
+              autoComplete="one-time-code"
+              inputMode="numeric"
+              maxLength={6}
+              value={verificationCode}
+              onChange={(event) =>
+                setVerificationCode(event.target.value.replace(/\D/g, ""))
+              }
+              required
+            />
+            {(securityError || authError) && (
+              <p role="alert" className="text-sm text-red-600">
+                {securityError || authError}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => void resendLoginCode()}
+                disabled={isSigningIn}
+              >
+                Send new code
+              </Button>
+              <Button type="button" variant="ghost" onClick={logout}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSigningIn || verificationCode.length !== 6}>
+                {isSigningIn ? "Verifying..." : "Verify"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </header>
   );
 };

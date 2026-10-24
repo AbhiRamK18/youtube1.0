@@ -4,6 +4,7 @@ import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { UserProvider } from "@/lib/AuthContext";
+import { ThemeProvider } from "next-themes";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,18 +13,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body>
-        <UserProvider>
-          <div className="min-h-screen bg-white text-black">
-            <Header />
-            <Toaster />
-            <div className="flex">
-              <Sidebar />
-              {children}
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+          <UserProvider>
+            <div className="min-h-screen bg-background text-foreground">
+              <Header />
+              <Toaster />
+              <div className="flex">
+                <Sidebar />
+                {children}
+              </div>
             </div>
-          </div>
-        </UserProvider>
+          </UserProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

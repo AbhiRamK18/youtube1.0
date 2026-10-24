@@ -17,6 +17,10 @@ const userschema = mongoose.Schema({
     type: String,
     trim: true,
   },
+  themePreference: {
+    type: String,
+    enum: ["light", "dark"],
+  },
 
   joinedon: { type: Date, default: Date.now },
 });

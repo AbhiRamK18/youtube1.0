@@ -48,6 +48,10 @@ const languages: { code: LanguageCode; name: string }[] = [
   { code: "ml", name: "Malayalam" },
 ];
 
+const getDisplayUsername = (username?: string, channelName?: string) =>
+  (username?.trim() || channelName?.toLowerCase().replace(/\s+/g, "") || "")
+    .replace(/^@/, "");
+
 const renderMentions = (text: string, userIds: string[]) => {
   const knownUserIds = [...new Set(userIds.filter(Boolean))]
     .sort((a, b) => b.length - a.length)
@@ -695,12 +699,22 @@ const Comments = ({ videoId }: { videoId: string }) => {
                   <span className="font-medium text-sm">
                     {comment.usercommented}
                   </span>
+                  {getDisplayUsername(comment.username, comment.usercommented) && (
+                    <span className="text-xs text-muted-foreground">
+                      @{getDisplayUsername(comment.username, comment.usercommented)}
+                    </span>
+                  )}
+                  {comment.location && (
+                    <span className="text-xs text-muted-foreground">
+                      📍 {comment.location}
+                    </span>
+                  )}
                   {(() => {
                     const postedAt = comment.commentedon || comment.createdAt;
                     const postedDate = postedAt ? new Date(postedAt) : null;
                     return (
                       <span
-                        className="text-xs text-gray-600"
+                        className="text-xs text-muted-foreground"
                         title={
                           postedDate && !Number.isNaN(postedDate.getTime())
                             ? postedDate.toLocaleString()
@@ -713,17 +727,6 @@ const Comments = ({ videoId }: { videoId: string }) => {
                       </span>
                     );
                   })()}
-                  {comment.username && (
-  <span className="text-xs text-blue-600 dark:text-blue-400">
-    @{comment.username}
-  </span>
-)}
-
-{comment.location && (
-  <span className="text-xs text-gray-500">
-    📍 {comment.location}
-  </span>
-)}
 
                   {(comment.editHistory?.length || comment.editedAt) && (
                     <>
@@ -799,11 +802,15 @@ const Comments = ({ videoId }: { videoId: string }) => {
                         onChange={(e) =>
                           setSourceLanguage(e.target.value as LanguageCode)
                         }
-                        className="rounded-md border px-2 py-1 text-sm"
+                        className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground [color-scheme:light] dark:[color-scheme:dark]"
                         aria-label="Original comment language"
                       >
                         {languages.map((language) => (
-                          <option key={language.code} value={language.code}>
+                          <option
+                            key={language.code}
+                            value={language.code}
+                            className="bg-background text-foreground"
+                          >
                             From: {language.name}
                           </option>
                         ))}
@@ -813,11 +820,15 @@ const Comments = ({ videoId }: { videoId: string }) => {
                         onChange={(e) =>
                           setTargetLanguage(e.target.value as LanguageCode)
                         }
-                        className="rounded-md border px-2 py-1 text-sm"
+                        className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground [color-scheme:light] dark:[color-scheme:dark]"
                         aria-label="Choose translation language"
                       >
                         {languages.map((language) => (
-                          <option key={language.code} value={language.code}>
+                          <option
+                            key={language.code}
+                            value={language.code}
+                            className="bg-background text-foreground"
+                          >
                             {language.name}
                           </option>
                         ))}
@@ -1138,16 +1149,39 @@ const Comments = ({ videoId }: { videoId: string }) => {
                                 <span className="font-semibold">
                                   {reply.userreplied || "Anonymous"}
                                 </span>
-                                {reply.username && (
-                                  <span className="text-xs text-blue-600 dark:text-blue-400">
-                                    @{reply.username}
+                                {getDisplayUsername(reply.username, reply.userreplied) && (
+                                  <span className="text-xs text-muted-foreground">
+                                    @{getDisplayUsername(reply.username, reply.userreplied)}
                                   </span>
                                 )}
                                 {reply.location && (
-                                  <span className="text-xs text-gray-500">
+                                  <span className="text-xs text-muted-foreground">
                                     📍 {reply.location}
                                   </span>
                                 )}
+                                {(() => {
+                                  const postedDate = reply.createdAt
+                                    ? new Date(reply.createdAt)
+                                    : null;
+                                  return (
+                                    <span
+                                      className="text-xs text-muted-foreground"
+                                      title={
+                                        postedDate &&
+                                        !Number.isNaN(postedDate.getTime())
+                                          ? postedDate.toLocaleString()
+                                          : undefined
+                                      }
+                                    >
+                                      {postedDate &&
+                                      !Number.isNaN(postedDate.getTime())
+                                        ? formatDistanceToNow(postedDate, {
+                                            addSuffix: true,
+                                          })
+                                        : "Date unavailable"}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </div>
 

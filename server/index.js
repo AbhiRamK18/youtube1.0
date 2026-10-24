@@ -16,7 +16,12 @@ setServers(["1.1.1.1"]);
 import path from "path";
 import { fileURLToPath } from "node:url";
 const serverDirectory = path.dirname(fileURLToPath(import.meta.url));
-app.use(cors());
+const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:3000";
+app.set(
+  "trust proxy",
+  process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : false,
+);
+app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(express.json({ limit: "30mb", extended: true }));
 app.use(express.urlencoded({ limit: "30mb", extended: true }));
 app.use("/uploads", express.static(path.join(serverDirectory, "uploads")));

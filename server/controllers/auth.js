@@ -2,38 +2,6 @@
 import mongoose from "mongoose";
 import users from "../Modals/Auth.js";
 
-export const login = async (req, res) => {
-  const { email, name, image } = req.body;
-
-  try {
-    const existingUser = await users.findOne({ email });
-
-    if (!existingUser) {
-      const newUser = await users.create({
-        email,
-        name,
-        image,
-      });
-
-      return res.status(201).json({ result: newUser });
-    } else {
-      // Refresh Google profile details without overwriting
-      // the user's custom username or location.
-      existingUser.name = name || existingUser.name;
-      existingUser.image = image || existingUser.image;
-
-      await existingUser.save();
-
-      return res.status(200).json({ result: existingUser });
-    }
-  } catch (error) {
-    console.error("Login error:", error);
-    return res.status(500).json({
-      message: "Something went wrong",
-    });
-  }
-};
-
 export const updateprofile = async (req, res) => {
   const { id: _id } = req.params;
   const { channelname, description, username, location } = req.body;
@@ -77,5 +45,23 @@ export const updateprofile = async (req, res) => {
     return res.status(500).json({
       message: "Something went wrong",
     });
+  }
+};
+
+export const updateThemePreference = async (req, res) => {
+  const { theme } = req.body || {};
+  if (!["light", "dark"].includes(theme)) {
+    return res.status(400).json({ message: "Theme must be light or dark" });
+  }
+
+  try {
+    req.authenticatedUser.themePreference = theme;
+    await req.authenticatedUser.save();
+    return res.status(200).json({
+      themePreference: req.authenticatedUser.themePreference,
+    });
+  } catch (error) {
+    console.error("Theme preference update failed:", error);
+    return res.status(500).json({ message: "Unable to save theme preference" });
   }
 };

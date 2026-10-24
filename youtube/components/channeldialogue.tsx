@@ -50,6 +50,7 @@ const Channeldialogue = ({ isopen, onclose, channeldata, mode }: any) => {
   };
   const handlesubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!user?._id) return;
     const payload = {
       channelname: formData.name,
       description: formData.description,
