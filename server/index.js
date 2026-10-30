@@ -1,4 +1,5 @@
 import express from "express";
+import { createServer } from "node:http";
 import cors from "cors";
 import dotenv from "dotenv";
 import bodyParser from "body-parser";
@@ -11,9 +12,12 @@ import watchlaterroutes from "./routes/watchlater.js";
 import historyrroutes from "./routes/history.js";
 import commentroutes from "./routes/comment.js";
 import subscriptionRoutes from "./routes/subscription.js";
+import callRoutes from "./routes/calls.js";
 import { servePublicVideo } from "./controllers/downloads.js";
+import { attachCallSignaling } from "./calls/signaling.js";
 dotenv.config();
 const app = express();
+const httpServer = createServer(app);
 setServers(["1.1.1.1"]);
 const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:3000";
 app.set(
@@ -35,9 +39,11 @@ app.use("/watch", watchlaterroutes);
 app.use("/history", historyrroutes);
 app.use("/comment", commentroutes);
 app.use("/subscription", subscriptionRoutes);
+app.use("/calls", callRoutes);
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+attachCallSignaling(httpServer, allowedOrigin);
+httpServer.listen(PORT, () => {
   console.log(`server running on port ${PORT}`);
 });
 

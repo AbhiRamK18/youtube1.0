@@ -113,7 +113,13 @@ const Header = () => {
       <div className="flex items-center gap-2">
         {user ? (
           <>
-            <Button variant="ghost" size="icon">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Video calls"
+              title="Video calls"
+              onClick={() => router.push("/calls")}
+            >
               <VideoIcon className="w-6 h-6" />
             </Button>
             <Button variant="ghost" size="icon">
