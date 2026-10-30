@@ -43,10 +43,12 @@ export default function ChannelPage() {
         <ChannelHeader channel={channel} user={user} />
         <Channeltabs />
         <div className="px-4 pb-8">
-          <VideoUploader channelId={id} channelName={channel?.channelname} />
+          {user?._id === id && (
+            <VideoUploader channelId={id} channelName={channel?.channelname} />
+          )}
         </div>
         <div className="px-4 pb-8">
-          <ChannelVideos videos={videos} />
+          <ChannelVideos videos={videos} isOwner={user?._id === id} />
         </div>
       </div>
     </div>

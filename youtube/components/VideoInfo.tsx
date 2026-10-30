@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import axios from "axios";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Button } from "./ui/button";
 import {
@@ -13,28 +14,70 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { useUser } from "@/lib/AuthContext";
 import axiosInstance from "@/lib/axiosinstance";
+import { downloadVideo } from "@/lib/downloadVideo";
+import { toast } from "sonner";
 
-const VideoInfo = ({ video }: any) => {
-  const [likes, setlikes] = useState(video.Like || 0);
-  const [dislikes, setDislikes] = useState(video.Dislike || 0);
-  const [isLiked, setIsLiked] = useState(false);
-  const [isDisliked, setIsDisliked] = useState(false);
+interface VideoInfoProps {
+  video: {
+    _id: string;
+    videotitle: string;
+    videochanel: string;
+    views: number;
+    createdAt: string;
+    Like?: number;
+    Dislike?: number;
+  };
+}
+
+const VideoInfo = ({ video }: VideoInfoProps) => {
+  const [likeState, setLikeState] = useState({
+    videoId: video._id,
+    value: video.Like || 0,
+  });
+  const [dislikeState, setDislikeState] = useState({
+    videoId: video._id,
+    value: video.Dislike || 0,
+  });
+  const [reactionState, setReactionState] = useState({
+    videoId: video._id,
+    liked: false,
+    disliked: false,
+  });
+  const likes = likeState.videoId === video._id ? likeState.value : video.Like || 0;
+  const dislikes =
+    dislikeState.videoId === video._id ? dislikeState.value : video.Dislike || 0;
+  const isLiked = reactionState.videoId === video._id && reactionState.liked;
+  const isDisliked = reactionState.videoId === video._id && reactionState.disliked;
+  const setlikes = (update: (value: number) => number) =>
+    setLikeState((current) => ({
+      videoId: video._id,
+      value: update(
+        current.videoId === video._id ? current.value : video.Like || 0,
+      ),
+    }));
+  const setDislikes = (update: (value: number) => number) =>
+    setDislikeState((current) => ({
+      videoId: video._id,
+      value: update(
+        current.videoId === video._id ? current.value : video.Dislike || 0,
+      ),
+    }));
+  const setIsLiked = (liked: boolean) =>
+    setReactionState((current) => ({
+      videoId: video._id,
+      liked,
+      disliked: current.videoId === video._id && current.disliked,
+    }));
+  const setIsDisliked = (disliked: boolean) =>
+    setReactionState((current) => ({
+      videoId: video._id,
+      liked: current.videoId === video._id && current.liked,
+      disliked,
+    }));
   const [showFullDescription, setShowFullDescription] = useState(false);
   const { user } = useUser();
   const [isWatchLater, setIsWatchLater] = useState(false);
-
-  // const user: any = {
-  //   id: "1",
-  //   name: "John Doe",
-  //   email: "john@example.com",
-  //   image: "https://github.com/shadcn.png?height=32&width=32",
-  // };
-  useEffect(() => {
-    setlikes(video.Like || 0);
-    setDislikes(video.Dislike || 0);
-    setIsLiked(false);
-    setIsDisliked(false);
-  }, [video]);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     const handleviews = async () => {
@@ -51,7 +94,7 @@ const VideoInfo = ({ video }: any) => {
       }
     };
     handleviews();
-  }, [user]);
+  }, [user, video._id]);
   const handleLike = async () => {
     if (!user) return;
     try {
@@ -60,13 +103,13 @@ const VideoInfo = ({ video }: any) => {
       });
       if (res.data.liked) {
         if (isLiked) {
-          setlikes((prev: any) => prev - 1);
+          setlikes((prev) => prev - 1);
           setIsLiked(false);
         } else {
-          setlikes((prev: any) => prev + 1);
+          setlikes((prev) => prev + 1);
           setIsLiked(true);
           if (isDisliked) {
-            setDislikes((prev: any) => prev - 1);
+            setDislikes((prev) => prev - 1);
             setIsDisliked(false);
           }
         }
@@ -97,19 +140,38 @@ const VideoInfo = ({ video }: any) => {
       });
       if (!res.data.liked) {
         if (isDisliked) {
-          setDislikes((prev: any) => prev - 1);
+          setDislikes((prev) => prev - 1);
           setIsDisliked(false);
         } else {
-          setDislikes((prev: any) => prev + 1);
+          setDislikes((prev) => prev + 1);
           setIsDisliked(true);
           if (isLiked) {
-            setlikes((prev: any) => prev - 1);
+            setlikes((prev) => prev - 1);
             setIsLiked(false);
           }
         }
       }
     } catch (error) {
       console.log(error);
+    }
+  };
+  const handleDownload = async () => {
+    if (!user) {
+      toast.error("Sign in to download videos.");
+      return;
+    }
+    setIsDownloading(true);
+    try {
+      await downloadVideo(video._id);
+      toast.success("Your download is starting.");
+    } catch (error: unknown) {
+      console.error("Video download request failed:", error);
+      const message = axios.isAxiosError<{ message?: string }>(error)
+        ? error.response?.data?.message
+        : undefined;
+      toast.error(message || "Unable to start this download.");
+    } finally {
+      setIsDownloading(false);
     }
   };
   return (
@@ -180,9 +242,11 @@ const VideoInfo = ({ video }: any) => {
             variant="ghost"
             size="sm"
             className="bg-gray-100 rounded-full"
+            disabled={isDownloading}
+            onClick={() => void handleDownload()}
           >
             <Download className="w-5 h-5 mr-2" />
-            Download
+            {isDownloading ? "Preparing…" : "Download"}
           </Button>
           <Button
             variant="ghost"

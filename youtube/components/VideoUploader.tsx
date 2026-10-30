@@ -7,6 +7,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
 import axiosInstance from "@/lib/axiosinstance";
+import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
 
 const VideoUploader = ({ channelId, channelName }: any) => {
   const [isUploading, setIsUploading] = useState(false);
@@ -14,6 +15,8 @@ const VideoUploader = ({ channelId, channelName }: any) => {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoTitle, setVideoTitle] = useState("");
   const [uploadComplete, setUploadComplete] = useState(false);
+  const [premiumOnly, setPremiumOnly] = useState(false);
+  const [minimumPlan, setMinimumPlan] = useState("bronze");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const handlefilechange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -64,10 +67,14 @@ const VideoUploader = ({ channelId, channelName }: any) => {
     formdata.append("videotitle", videoTitle);
     formdata.append("videochanel", channelName);
     formdata.append("uploader", channelId);
+    formdata.append("premiumOnly", String(premiumOnly));
+    formdata.append("minimumPlan", minimumPlan);
     try {
       setIsUploading(true);
       setUploadProgress(0);
+      const authConfig = await getFirebaseAuthConfig();
       const res = await axiosInstance.post("/video/upload", formdata, {
+        ...authConfig,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onUploadProgress: (progresEvent: any) => {
           if (progresEvent.total) {
@@ -161,6 +168,31 @@ const VideoUploader = ({ channelId, channelName }: any) => {
                 </div>
                 <Progress value={uploadProgress} className="h-2" />
               </div>
+            )}
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={premiumOnly}
+                onChange={(event) => setPremiumOnly(event.target.checked)}
+                disabled={isUploading || uploadComplete}
+              />
+              Premium-only video
+            </label>
+            {premiumOnly && (
+              <label className="flex items-center gap-2 text-sm">
+                Minimum plan
+                <select
+                  value={minimumPlan}
+                  onChange={(event) => setMinimumPlan(event.target.value)}
+                  disabled={isUploading || uploadComplete}
+                  className="rounded-md border border-input bg-background px-3 py-2 text-foreground [color-scheme:light] dark:[color-scheme:dark]"
+                >
+                  <option value="bronze">Bronze or higher</option>
+                  <option value="silver">Silver or higher</option>
+                  <option value="gold">Gold only</option>
+                </select>
+              </label>
             )}
 
             <div className="flex justify-end gap-3">

@@ -14,6 +14,8 @@ interface WatchVideo {
   videotitle: string;
   filepath: string;
   filetype?: string;
+  premiumOnly?: boolean;
+  minimumPlan?: "bronze" | "silver" | "gold";
   videochanel: string;
   views: number;
   createdAt: string;

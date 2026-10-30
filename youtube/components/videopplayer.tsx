@@ -20,10 +20,12 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import axios from "axios";
 import { useUser } from "@/lib/AuthContext";
 import axiosInstance from "@/lib/axiosinstance";
 import { auth } from "@/lib/firebase";
 import { getVideoUrl } from "@/lib/videoUrl";
+import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
 
 const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2];
 const COMPLETION_WATCH_PERCENTAGE = 0.9;
@@ -42,6 +44,7 @@ interface VideoPlayerProps {
     videotitle: string;
     filepath: string;
     filetype?: string;
+    premiumOnly?: boolean;
     captions?: CaptionTrack[];
   };
   nextVideo?: { _id: string; videotitle: string };
@@ -121,6 +124,10 @@ export default function VideoPlayer({
   const [loading, setLoading] = useState(true);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [error, setError] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const playbackUrl = video.premiumOnly
+    ? sourceUrl
+    : getVideoUrl(video.filepath);
   const [quality, setQuality] = useState("");
   const [preview, setPreview] = useState<{ time: number; left: number } | null>(
     null,
@@ -134,6 +141,46 @@ export default function VideoPlayer({
   const completionThreshold = Number.isFinite(completionWatchPercentage)
     ? Math.max(0, Math.min(1, completionWatchPercentage))
     : COMPLETION_WATCH_PERCENTAGE;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!video.premiumOnly) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const config = await getFirebaseAuthConfig();
+        const response = await axiosInstance.post(
+          `/video/${video._id}/stream-ticket`,
+          {},
+          config,
+        );
+        if (!cancelled) setSourceUrl(response.data.url);
+      } catch (streamError: unknown) {
+        console.error("Premium video authorization failed:", streamError);
+        if (!cancelled) {
+          const message = axios.isAxiosError<{ message?: string }>(streamError)
+            ? streamError.response?.data?.message
+            : undefined;
+          setError(
+            message ||
+              "Sign in and subscribe to a qualifying plan to watch this video.",
+          );
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [video._id, video.filepath, video.premiumOnly]);
+
+  useEffect(() => {
+    if (playbackUrl) videoRef.current?.load();
+  }, [playbackUrl]);
 
   const saveProgress = useCallback(
     (position: number, completed: boolean) => {
@@ -569,7 +616,7 @@ export default function VideoPlayer({
         onClick={togglePlayback}
         onDoubleClick={() => void toggleFullscreen()}
       >
-        <source src={getVideoUrl(video.filepath)} type={video.filetype || "video/mp4"} />
+        {playbackUrl && <source src={playbackUrl} type={video.filetype || "video/mp4"} />}
         {video.captions?.map((track) => (
           <track
             key={`${track.language}-${track.src}`}
@@ -661,7 +708,7 @@ export default function VideoPlayer({
             >
               <video
                 ref={previewRef}
-                src={getVideoUrl(video.filepath)}
+                src={playbackUrl}
                 muted
                 preload="metadata"
                 className="aspect-video w-full object-contain"
