@@ -13,6 +13,8 @@ import {
   Camera,
   CameraOff,
   Clipboard,
+  Circle,
+  Download,
   FileUp,
   Hand,
   Lock,
@@ -52,6 +54,7 @@ type CallSettings = {
   locked: boolean;
   chatEnabled: boolean;
   screenShareEnabled: boolean;
+  recording?: boolean;
 };
 
 type ChatMessage = {
@@ -69,6 +72,23 @@ type SignalMessage = {
   type: "offer" | "answer" | "ice-candidate";
   signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
 };
+type SecureCallPacket =
+  | { kind: "text"; id: string; text: string; sentAt: number }
+  | {
+      kind: "file-start";
+      id: string;
+      name: string;
+      mime: string;
+      sentAt: number;
+      totalChunks: number;
+    }
+  | { kind: "file-chunk"; id: string; index: number; chunk: string };
+type PendingAttachment = {
+  name: string;
+  mime: string;
+  sentAt: number;
+  chunks: (string | undefined)[];
+};
 
 const serverUrl =
   process.env.BACKEND_URL ||
@@ -83,6 +103,8 @@ const allowedAttachmentTypes = new Set([
   "text/plain",
 ]);
 const MAX_ATTACHMENT_SIZE = 700_000;
+const MAX_RECORDING_SIZE = 250 * 1024 * 1024;
+const ACTIVE_CALL_STORAGE_KEY = "active-video-call-room";
 
 function VideoTile({
   name,
@@ -91,6 +113,7 @@ function VideoTile({
   cameraEnabled = true,
   speaking = false,
   local = false,
+  onVideoElement,
 }: {
   name: string;
   stream?: MediaStream;
@@ -98,6 +121,7 @@ function VideoTile({
   cameraEnabled?: boolean;
   speaking?: boolean;
   local?: boolean;
+  onVideoElement?: (element: HTMLVideoElement | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -117,7 +141,10 @@ function VideoTile({
     >
       {stream && cameraEnabled ? (
         <video
-          ref={videoRef}
+          ref={(element) => {
+            videoRef.current = element;
+            onVideoElement?.(element);
+          }}
           autoPlay
           playsInline
           muted={muted}
@@ -159,14 +186,29 @@ export default function CallRoomPage() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
   const screenTrackRef = useRef<MediaStreamTrack | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingFrameRef = useRef<number | null>(null);
+  const recordingCanvasStreamRef = useRef<MediaStream | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
+  const recordingAudioDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const recordingSourcesRef = useRef(new Map<string, MediaStreamAudioSourceNode>());
+  const recordingAudioStreamsRef = useRef(new Map<string, MediaStream>());
+  const recordingBytesRef = useRef(0);
+  const recordingVideoElementsRef = useRef(new Map<string, HTMLVideoElement>());
+  const recordingRef = useRef(false);
   const peersRef = useRef(new Map<string, RTCPeerConnection>());
   const pendingIceRef = useRef(new Map<string, RTCIceCandidateInit[]>());
   const remoteStreamsRef = useRef(new Map<string, MediaStream>());
+  const dataChannelsRef = useRef(new Map<string, RTCDataChannel>());
+  const pendingAttachmentsRef = useRef(new Map<string, PendingAttachment>());
+  const peerRestartTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const iceServersRef = useRef<RTCIceServer[]>([
     { urls: "stun:stun.l.google.com:19302" },
   ]);
   const participantsRef = useRef<Participant[]>([]);
   const myUserIdRef = useRef("");
+  const joinedOnceRef = useRef(false);
   const cleanupRef = useRef(false);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
@@ -176,6 +218,7 @@ export default function CallRoomPage() {
     chatEnabled: true,
     screenShareEnabled: true,
   });
+  const settingsRef = useRef(settings);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState("");
   const [phase, setPhase] = useState<"ready" | "joining" | "joined" | "error">("ready");
@@ -191,7 +234,12 @@ export default function CallRoomPage() {
   const speakingUsersRef = useRef<Set<string>>(new Set());
   const [connectionQuality, setConnectionQuality] =
     useState<Participant["connectionQuality"]>("unknown");
+  const [recording, setRecording] = useState(false);
+  const [hasTurnServer, setHasTurnServer] = useState(false);
+  const adaptiveQualityRef = useRef<Participant["connectionQuality"]>("unknown");
   const currentUserId = user?._id || "";
+  const hasMicrophone = Boolean(localStream?.getAudioTracks().length);
+  const hasCamera = cameras.length > 0;
   const me = participants.find((participant) => participant.userId === currentUserId);
   const isHost = me?.isHost || false;
   const canModerate = Boolean(me?.isHost || me?.isCohost);
@@ -203,8 +251,13 @@ export default function CallRoomPage() {
 
   const closePeers = useCallback(() => {
     for (const peer of peersRef.current.values()) peer.close();
+    for (const channel of dataChannelsRef.current.values()) channel.close();
     peersRef.current.clear();
     pendingIceRef.current.clear();
+    dataChannelsRef.current.clear();
+    pendingAttachmentsRef.current.clear();
+    for (const timer of peerRestartTimersRef.current.values()) clearTimeout(timer);
+    peerRestartTimersRef.current.clear();
     remoteStreamsRef.current.clear();
     setRemoteStreams({});
   }, []);
@@ -224,6 +277,18 @@ export default function CallRoomPage() {
     (notifyServer = true) => {
       cleanupRef.current = true;
       const socket = socketRef.current;
+      if (recordingRef.current) {
+        recordingRef.current = false;
+        setRecording(false);
+        socket?.emit("call:recording", { recording: false });
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      }
+      if (currentUserId && typeof window !== "undefined") {
+        const savedRoom = window.localStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
+        if (savedRoom === `${currentUserId}:${roomId}`) {
+          window.localStorage.removeItem(ACTIVE_CALL_STORAGE_KEY);
+        }
+      }
       if (socket?.connected && notifyServer) {
         socket.emit(isHost ? "call:end" : "call:leave");
       }
@@ -234,7 +299,7 @@ export default function CallRoomPage() {
       setPhase("ready");
       router.push("/calls");
     },
-    [closePeers, isHost, router, stopMedia],
+    [closePeers, currentUserId, isHost, roomId, router, stopMedia],
   );
 
   useEffect(() => {
@@ -313,6 +378,7 @@ export default function CallRoomPage() {
     if (phase !== "joined") return;
     const interval = window.setInterval(async () => {
       let maxRtt = 0;
+      let maxPacketLoss = 0;
       for (const peer of peersRef.current.values()) {
         try {
           const stats = await peer.getStats();
@@ -324,15 +390,56 @@ export default function CallRoomPage() {
             ) {
               maxRtt = Math.max(maxRtt, report.currentRoundTripTime);
             }
+            if (
+              report.type === "remote-inbound-rtp" &&
+              typeof report.fractionLost === "number"
+            ) {
+              maxPacketLoss = Math.max(maxPacketLoss, report.fractionLost);
+            }
           }
         } catch (statsError) {
           console.error("Could not read peer connection quality:", statsError);
         }
       }
-      const quality =
-        maxRtt === 0 ? "unknown" : maxRtt > 0.4 ? "poor" : maxRtt > 0.2 ? "fair" : "good";
+      const quality: Participant["connectionQuality"] =
+        peersRef.current.size === 0
+          ? "unknown"
+          : maxRtt > 0.4 || maxPacketLoss > 0.08
+            ? "poor"
+            : maxRtt > 0.2 || maxPacketLoss > 0.03
+              ? "fair"
+              : "good";
       setConnectionQuality(quality);
       socketRef.current?.emit("call:update", { connectionQuality: quality });
+      if (quality === adaptiveQualityRef.current || quality === "unknown") return;
+      adaptiveQualityRef.current = quality;
+      const videoSettings = {
+        good: { maxBitrate: 600_000, scale: 1.5, maxFramerate: 20 },
+        fair: { maxBitrate: 320_000, scale: 2, maxFramerate: 15 },
+        poor: { maxBitrate: 140_000, scale: 3, maxFramerate: 10 },
+        unknown: { maxBitrate: 320_000, scale: 2, maxFramerate: 15 },
+      }[quality];
+      await Promise.all(
+        [...peersRef.current.values()].flatMap((peer) =>
+          peer.getSenders().map(async (sender) => {
+            if (!sender.track) return;
+            const parameters = sender.getParameters();
+            if (!parameters.encodings?.length) return;
+            parameters.encodings[0].maxBitrate =
+              sender.track.kind === "audio" ? 64_000 : videoSettings.maxBitrate;
+            if (sender.track.kind === "video") {
+              parameters.encodings[0].scaleResolutionDownBy = videoSettings.scale;
+              parameters.encodings[0].maxFramerate = videoSettings.maxFramerate;
+              parameters.degradationPreference = "maintain-framerate";
+            }
+            try {
+              await sender.setParameters(parameters);
+            } catch (parameterError) {
+              console.error("Could not adapt video quality:", parameterError);
+            }
+          }),
+        ),
+      );
     }, 5000);
     return () => window.clearInterval(interval);
   }, [phase]);
@@ -340,7 +447,11 @@ export default function CallRoomPage() {
   useEffect(
     () => () => {
       const socket = socketRef.current;
-      if (socket?.connected) socket.emit("call:leave");
+      if (recordingRef.current) {
+        recordingRef.current = false;
+        socket?.emit("call:recording", { recording: false });
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+      }
       socket?.disconnect();
       closePeers();
       stopMedia();
@@ -361,6 +472,10 @@ export default function CallRoomPage() {
     setError("");
     setPhase("joining");
     cleanupRef.current = false;
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    closePeers();
+    stopMedia();
     try {
       let stream: MediaStream;
       try {
@@ -372,24 +487,33 @@ export default function CallRoomPage() {
           },
           video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
         });
-      } catch (cameraError) {
-        if (!(cameraError instanceof DOMException) || cameraError.name !== "NotAllowedError") {
-          throw cameraError;
+      } catch (initialMediaError) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          toast.message("Camera unavailable or denied. Joining with microphone only.");
+        } catch (audioError) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { facingMode: "user" },
+            });
+            toast.message("Microphone unavailable or denied. Joining with camera only.");
+          } catch {
+            throw initialMediaError || audioError;
+          }
         }
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
-        toast.message("Camera access was denied. Joining with microphone only.");
       }
       localStreamRef.current = stream;
       cameraTrackRef.current = stream.getVideoTracks()[0] || null;
       setLocalStream(stream);
-      setMuted(false);
+      setMuted(!stream.getAudioTracks().length);
       setCameraEnabled(Boolean(cameraTrackRef.current));
       const devices = await navigator.mediaDevices.enumerateDevices();
       setCameras(devices.filter((device) => device.kind === "videoinput"));
@@ -403,16 +527,154 @@ export default function CallRoomPage() {
       });
       socketRef.current = socket;
       socket.on("call:ice-config", (config: { iceServers?: RTCIceServer[] }) => {
-        if (config.iceServers?.length) iceServersRef.current = config.iceServers;
+        if (config.iceServers?.length) {
+          iceServersRef.current = config.iceServers;
+          setHasTurnServer(
+            config.iceServers.some((server) =>
+              (Array.isArray(server.urls) ? server.urls : [server.urls]).some(
+                (url) =>
+                  typeof url === "string" &&
+                  (url.startsWith("turn:") || url.startsWith("turns:")),
+              ),
+            ),
+          );
+        }
       });
 
       const emitSignal = (targetUserId: string, type: SignalMessage["type"], signal: unknown) =>
         socket.emit("peer:signal", { targetUserId, type, signal });
 
-      const createPeer = (peerUserId: string) => {
+      const configureDataChannel = (
+        peerUserId: string,
+        channel: RTCDataChannel,
+      ) => {
+        dataChannelsRef.current.set(peerUserId, channel);
+        channel.onmessage = (event) => {
+          if (!settingsRef.current.chatEnabled || typeof event.data !== "string") return;
+          let packet: SecureCallPacket;
+          try {
+            packet = JSON.parse(event.data) as SecureCallPacket;
+          } catch {
+            return;
+          }
+          const sender = participantsRef.current.find(
+            (participant) => participant.userId === peerUserId,
+          );
+          const senderName = sender?.name || "Participant";
+          if (
+            packet.kind === "text" &&
+            typeof packet.id === "string" &&
+            typeof packet.text === "string" &&
+            packet.text.length <= 2_000 &&
+            typeof packet.sentAt === "number"
+          ) {
+            setMessages((current) =>
+              current.some((message) => message.id === packet.id)
+                ? current
+                : [
+                    ...current.slice(-99),
+                    {
+                      id: packet.id,
+                      userId: peerUserId,
+                      name: senderName,
+                      text: packet.text,
+                      sentAt: packet.sentAt,
+                    },
+                  ],
+            );
+            return;
+          }
+          if (
+            packet.kind === "file-start" &&
+            typeof packet.id === "string" &&
+            typeof packet.name === "string" &&
+            allowedAttachmentTypes.has(packet.mime) &&
+            typeof packet.sentAt === "number" &&
+            Number.isInteger(packet.totalChunks) &&
+            packet.totalChunks > 0 &&
+            packet.totalChunks <= 100
+          ) {
+            pendingAttachmentsRef.current.set(`${peerUserId}:${packet.id}`, {
+              name: packet.name.slice(0, 140),
+              mime: packet.mime,
+              sentAt: packet.sentAt,
+              chunks: Array(packet.totalChunks).fill(undefined),
+            });
+            return;
+          }
+          if (
+            packet.kind === "file-chunk" &&
+            typeof packet.id === "string" &&
+            Number.isInteger(packet.index) &&
+            typeof packet.chunk === "string" &&
+            packet.chunk.length <= 16_000
+          ) {
+            const attachmentKey = `${peerUserId}:${packet.id}`;
+            const pending = pendingAttachmentsRef.current.get(attachmentKey);
+            if (!pending || packet.index < 0 || packet.index >= pending.chunks.length) {
+              return;
+            }
+            pending.chunks[packet.index] = packet.chunk;
+            if (
+              pending.chunks.reduce(
+                (total, chunk) => total + (chunk?.length || 0),
+                0,
+              ) > 1_000_000
+            ) {
+              pendingAttachmentsRef.current.delete(attachmentKey);
+              return;
+            }
+            if (pending.chunks.every((chunk) => chunk !== undefined)) {
+              const dataUrl = pending.chunks.join("");
+              pendingAttachmentsRef.current.delete(attachmentKey);
+              if (
+                dataUrl.length > 1_000_000 ||
+                !dataUrl.startsWith(`data:${pending.mime};base64,`)
+              ) return;
+              setMessages((current) =>
+                current.some((message) => message.id === packet.id)
+                  ? current
+                  : [
+                      ...current.slice(-99),
+                      {
+                        id: packet.id,
+                        userId: peerUserId,
+                        name: senderName,
+                        text: "",
+                        sentAt: pending.sentAt,
+                        attachment: {
+                          name: pending.name,
+                          type: pending.mime,
+                          dataUrl,
+                        },
+                      },
+                    ],
+              );
+            }
+          }
+        };
+        channel.onclose = () => {
+          if (dataChannelsRef.current.get(peerUserId) === channel) {
+            dataChannelsRef.current.delete(peerUserId);
+          }
+        };
+      };
+
+      let renegotiatePeer: ((peerUserId: string) => void) | null = null;
+      const createPeer = (peerUserId: string, initiator = false) => {
         const existing = peersRef.current.get(peerUserId);
-        if (existing) return existing;
+        if (existing) {
+          if (initiator && !dataChannelsRef.current.has(peerUserId)) {
+            configureDataChannel(peerUserId, existing.createDataChannel("call-chat"));
+          }
+          return existing;
+        }
         const peer = new RTCPeerConnection({ iceServers: iceServersRef.current });
+        peer.ondatachannel = (event) =>
+          configureDataChannel(peerUserId, event.channel);
+        if (initiator) {
+          configureDataChannel(peerUserId, peer.createDataChannel("call-chat"));
+        }
         const activeStream = localStreamRef.current;
         let hasVideoTrack = false;
         if (activeStream) {
@@ -454,7 +716,35 @@ export default function CallRoomPage() {
           setRemoteStreams((current) => ({ ...current, [peerUserId]: remoteStream }));
         };
         peer.onconnectionstatechange = () => {
-          if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+          const restartKey = peerUserId;
+          if (peer.connectionState === "connected") {
+            const restartTimer = peerRestartTimersRef.current.get(restartKey);
+            if (restartTimer) clearTimeout(restartTimer);
+            peerRestartTimersRef.current.delete(restartKey);
+            setError("");
+            return;
+          }
+          if (peer.connectionState === "disconnected" || peer.connectionState === "failed") {
+            if (peerRestartTimersRef.current.has(restartKey)) return;
+            const restartTimer = setTimeout(() => {
+              peerRestartTimersRef.current.delete(restartKey);
+              if (peersRef.current.get(peerUserId) !== peer) return;
+              if (!["disconnected", "failed"].includes(peer.connectionState)) return;
+              if (myUserIdRef.current.localeCompare(peerUserId) >= 0) return;
+              peer.close();
+              peersRef.current.delete(peerUserId);
+              remoteStreamsRef.current.delete(peerUserId);
+              setRemoteStreams((current) => {
+                const next = { ...current };
+                delete next[peerUserId];
+                return next;
+              });
+              renegotiatePeer?.(peerUserId);
+            }, peer.connectionState === "failed" ? 0 : 4_000);
+            peerRestartTimersRef.current.set(restartKey, restartTimer);
+            return;
+          }
+          if (peer.connectionState === "closed") {
             peer.close();
             peersRef.current.delete(peerUserId);
             remoteStreamsRef.current.delete(peerUserId);
@@ -470,7 +760,7 @@ export default function CallRoomPage() {
       };
 
       const connectToPeer = async (peerUserId: string) => {
-        const peer = createPeer(peerUserId);
+        const peer = createPeer(peerUserId, true);
         if (peer.signalingState !== "stable") return;
         try {
           const offer = await peer.createOffer();
@@ -479,6 +769,19 @@ export default function CallRoomPage() {
         } catch (peerError) {
           console.error("Could not start peer connection:", peerError);
         }
+      };
+      renegotiatePeer = (peerUserId) => {
+        const peer = createPeer(peerUserId, true);
+        if (!peer || peer.signalingState !== "stable") return;
+        void (async () => {
+          try {
+            const offer = await peer.createOffer({ iceRestart: true });
+            await peer.setLocalDescription(offer);
+            emitSignal(peerUserId, "offer", offer);
+          } catch (peerError) {
+            console.error("Could not restart a peer connection:", peerError);
+          }
+        })();
       };
 
       socket.on("connect", () => {
@@ -498,16 +801,26 @@ export default function CallRoomPage() {
           }
           myUserIdRef.current = ack.userId || currentUserId;
           if (ack.iceServers?.length) iceServersRef.current = ack.iceServers;
+          window.localStorage.setItem(
+            ACTIVE_CALL_STORAGE_KEY,
+            `${currentUserId}:${roomId}`,
+          );
+          joinedOnceRef.current = true;
+          setError("");
           updateParticipants(ack.state.participants);
-          setSettings({
+          const nextSettings = {
             locked: Boolean(ack.state.locked),
             chatEnabled: Boolean(ack.state.chatEnabled),
             screenShareEnabled: Boolean(ack.state.screenShareEnabled),
-          });
+            recording: Boolean(ack.state.recording),
+          };
+          setRecording(nextSettings.recording);
+          settingsRef.current = nextSettings;
+          setSettings(nextSettings);
           setElapsedSeconds(Math.max(0, Math.floor((Date.now() - ack.state.startedAt) / 1000)));
           setPhase("joined");
           socket.emit("call:update", {
-            muted: false,
+            muted: !localStreamRef.current?.getAudioTracks().length,
             cameraEnabled: Boolean(cameraTrackRef.current),
           });
           for (const participant of ack.state.participants) {
@@ -520,20 +833,44 @@ export default function CallRoomPage() {
       socket.on("connect_error", (socketError) => {
         console.error("Video call connection failed:", socketError);
         setError(socketError.message || "Could not connect to the call server.");
-        setPhase("error");
+        if (!joinedOnceRef.current) setPhase("error");
       });
       socket.on("disconnect", () => {
+        if (recordingRef.current) {
+          recordingRef.current = false;
+          setRecording(false);
+          if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        }
         closePeers();
+        setConnectionQuality("unknown");
         if (!cleanupRef.current) setError("Connection lost. Reconnecting…");
       });
       socket.on("call:participants", updateParticipants);
-      socket.on("call:settings", (next: CallSettings) => setSettings(next));
+      socket.on("call:settings", (next: CallSettings) => {
+        settingsRef.current = next;
+        setSettings(next);
+        setRecording(Boolean(next.recording));
+      });
+      socket.on("call:recording", ({ recording: nextRecording }: { recording: boolean }) => {
+        setRecording(nextRecording);
+        settingsRef.current = { ...settingsRef.current, recording: nextRecording };
+        setSettings((current) => ({ ...current, recording: nextRecording }));
+        if (nextRecording && myUserIdRef.current !== participantsRef.current.find((participant) => participant.isHost)?.userId) {
+          toast.message("The host has started recording this meeting.");
+        }
+      });
       socket.on("call:participant-joined", ({ userId }: { userId: string }) => {
         if (userId !== myUserIdRef.current) void connectToPeer(userId);
       });
       socket.on("call:participant-offline", ({ userId }: { userId: string }) => {
         peersRef.current.get(userId)?.close();
         peersRef.current.delete(userId);
+        remoteStreamsRef.current.delete(userId);
+        setRemoteStreams((current) => {
+          const next = { ...current };
+          delete next[userId];
+          return next;
+        });
       });
       socket.on("peer:signal", async ({ fromUserId, type, signal }: SignalMessage) => {
         const peer = createPeer(fromUserId);
@@ -567,9 +904,6 @@ export default function CallRoomPage() {
           console.error("Could not negotiate a peer connection:", peerError);
         }
       });
-      socket.on("call:chat", (message: ChatMessage) =>
-        setMessages((current) => [...current.slice(-99), message]),
-      );
       socket.on("call:force-mute", () => {
         for (const track of localStreamRef.current?.getAudioTracks() || []) track.enabled = false;
         setMuted(true);
@@ -587,6 +921,9 @@ export default function CallRoomPage() {
         router.push("/calls");
       });
       socket.on("call:ended", () => {
+        recordingRef.current = false;
+        setRecording(false);
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
         setError("The host ended the meeting.");
         setPhase("error");
         leaveCall(false);
@@ -606,6 +943,10 @@ export default function CallRoomPage() {
   };
 
   const toggleMicrophone = () => {
+    if (!localStreamRef.current?.getAudioTracks().length) {
+      toast.error("No microphone is available for this call.");
+      return;
+    }
     if (me?.mutedByHost && muted) {
       toast.error("The host has muted your microphone. Ask them to allow you to unmute.");
       return;
@@ -619,6 +960,14 @@ export default function CallRoomPage() {
   };
 
   const toggleCamera = () => {
+    if (!hasCamera) {
+      toast.error("No camera is available for this call.");
+      return;
+    }
+    if (sharingScreen) {
+      toast.message("Stop screen sharing before changing camera status.");
+      return;
+    }
     const nextEnabled = !cameraEnabled;
     for (const track of localStreamRef.current?.getVideoTracks() || []) {
       track.enabled = nextEnabled;
@@ -661,6 +1010,225 @@ export default function CallRoomPage() {
     setSharingScreen(false);
     socketRef.current?.emit("call:update", { screenSharing: false });
   }, []);
+
+  const stopRecording = () => {
+    if (!recordingRef.current) return;
+    recordingRef.current = false;
+    setRecording(false);
+    socketRef.current?.emit("call:recording", { recording: false });
+    if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+  };
+
+  const startRecording = () => {
+    if (!isHost || recordingRef.current) return;
+    if (!("MediaRecorder" in window) || !HTMLCanvasElement.prototype.captureStream) {
+      toast.error("Meeting recording is not supported by this browser.");
+      return;
+    }
+
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Could not create the recording canvas.");
+      const canvasStream = canvas.captureStream(20);
+      recordingCanvasStreamRef.current = canvasStream;
+      recordingChunksRef.current = [];
+
+      const audioContext = new AudioContext();
+      const audioDestination = audioContext.createMediaStreamDestination();
+      recordingAudioContextRef.current = audioContext;
+      recordingAudioDestinationRef.current = audioDestination;
+
+      const drawFrame = () => {
+        const tiles = [
+          {
+            id: currentUserId,
+            name: user?.channelname || user?.username || user?.name || "Host",
+            stream: localStreamRef.current,
+          },
+          ...participantsRef.current
+            .filter((participant) => participant.userId !== currentUserId)
+            .map((participant) => ({
+              id: participant.userId,
+              name: participant.name,
+              stream: remoteStreamsRef.current.get(participant.userId),
+            })),
+        ].slice(0, 4);
+        const columns = tiles.length > 1 ? 2 : 1;
+        const rows = Math.ceil(tiles.length / columns);
+        const tileWidth = canvas.width / columns;
+        const tileHeight = canvas.height / rows;
+        context.fillStyle = "#09090b";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        tiles.forEach((tile, index) => {
+          const x = (index % columns) * tileWidth;
+          const y = Math.floor(index / columns) * tileHeight;
+          const video = recordingVideoElementsRef.current.get(tile.id);
+          if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            try {
+              context.drawImage(video, x, y, tileWidth, tileHeight);
+            } catch (drawError) {
+              console.error("Could not draw a meeting recording frame:", drawError);
+            }
+          } else {
+            context.fillStyle = "#27272a";
+            context.fillRect(x, y, tileWidth, tileHeight);
+            context.fillStyle = "#ffffff";
+            context.font = "bold 48px sans-serif";
+            context.textAlign = "center";
+            context.fillText(tile.name.slice(0, 1).toUpperCase(), x + tileWidth / 2, y + tileHeight / 2);
+          }
+          context.fillStyle = "rgba(0, 0, 0, 0.65)";
+          context.fillRect(x, y + tileHeight - 42, tileWidth, 42);
+          context.fillStyle = "#ffffff";
+          context.font = "20px sans-serif";
+          context.textAlign = "left";
+          context.fillText(tile.name.slice(0, 50), x + 16, y + tileHeight - 14);
+        });
+        recordingFrameRef.current = window.requestAnimationFrame(drawFrame);
+      };
+      drawFrame();
+
+      const streams: [string, MediaStream | null][] = [
+        ["local", localStreamRef.current],
+      ];
+      for (const [participantId, stream] of remoteStreamsRef.current) {
+        streams.push([participantId, stream]);
+      }
+      for (const [participantId, stream] of streams) {
+        if (!stream?.getAudioTracks().length) continue;
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(audioDestination);
+        recordingSourcesRef.current.set(participantId, source);
+        recordingAudioStreamsRef.current.set(participantId, stream);
+      }
+
+      const recordingStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...audioDestination.stream.getAudioTracks(),
+      ]);
+      const mimeType = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ].find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = new MediaRecorder(
+        recordingStream,
+        mimeType ? { mimeType } : undefined,
+      );
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (!event.data.size) return;
+        recordingBytesRef.current += event.data.size;
+        recordingChunksRef.current.push(event.data);
+        if (recordingBytesRef.current > MAX_RECORDING_SIZE) {
+          toast.error("Recording reached the 250 MB limit and was stopped.");
+          stopRecording();
+        }
+      };
+      recorder.onerror = (event) => {
+        console.error("Meeting recorder reported an error:", event);
+        toast.error("Recording stopped because the browser reported an error.");
+        stopRecording();
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, {
+          type: recorder.mimeType || "video/webm",
+        });
+        recordingChunksRef.current = [];
+        recordingBytesRef.current = 0;
+        if (blob.size) {
+          const downloadUrl = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = downloadUrl;
+          const extension = recorder.mimeType.includes("mp4") ? "mp4" : "webm";
+          anchor.download = `meeting-${roomId}-${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`;
+          anchor.click();
+          window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 60_000);
+          toast.success("Meeting recording saved to your downloads.");
+        }
+        if (recordingFrameRef.current !== null) {
+          window.cancelAnimationFrame(recordingFrameRef.current);
+          recordingFrameRef.current = null;
+        }
+        recordingCanvasStreamRef.current?.getTracks().forEach((track) => track.stop());
+        recordingCanvasStreamRef.current = null;
+        recordingAudioDestinationRef.current?.stream
+          .getTracks()
+          .forEach((track) => track.stop());
+        for (const source of recordingSourcesRef.current.values()) source.disconnect();
+        recordingSourcesRef.current.clear();
+        recordingAudioStreamsRef.current.clear();
+        recordingAudioDestinationRef.current = null;
+        void recordingAudioContextRef.current?.close();
+        recordingAudioContextRef.current = null;
+        recorderRef.current = null;
+      };
+      recorder.start(1000);
+      recordingRef.current = true;
+      setRecording(true);
+      socketRef.current?.emit("call:recording", { recording: true });
+    } catch (recordingError) {
+      console.error("Could not start meeting recording:", recordingError);
+      toast.error("Could not start recording. Check browser permissions and available storage.");
+      recordingCanvasStreamRef.current?.getTracks().forEach((track) => track.stop());
+      recordingCanvasStreamRef.current = null;
+      if (recordingFrameRef.current !== null) {
+        window.cancelAnimationFrame(recordingFrameRef.current);
+        recordingFrameRef.current = null;
+      }
+      for (const source of recordingSourcesRef.current.values()) source.disconnect();
+      recordingSourcesRef.current.clear();
+      recordingAudioStreamsRef.current.clear();
+      recordingAudioDestinationRef.current = null;
+      void recordingAudioContextRef.current?.close();
+      recordingAudioContextRef.current = null;
+      recorderRef.current = null;
+      recordingChunksRef.current = [];
+      recordingBytesRef.current = 0;
+    }
+  };
+
+  useEffect(() => {
+    const audioContext = recordingAudioContextRef.current;
+    const destination = recordingAudioDestinationRef.current;
+    if (!recording || !audioContext || !destination) return;
+    const streams: [string, MediaStream | null][] = [
+      ["local", localStream],
+      ...Object.entries(remoteStreams),
+    ];
+    const activeStreamIds = new Set(
+      streams.filter((entry) => entry[1]).map(([participantId]) => participantId),
+    );
+    for (const [participantId, source] of recordingSourcesRef.current) {
+      if (!activeStreamIds.has(participantId)) {
+        source.disconnect();
+        recordingSourcesRef.current.delete(participantId);
+        recordingAudioStreamsRef.current.delete(participantId);
+      }
+    }
+    for (const [participantId, stream] of streams) {
+      if (!stream) continue;
+      if (!stream.getAudioTracks().length) {
+        recordingSourcesRef.current.get(participantId)?.disconnect();
+        recordingSourcesRef.current.delete(participantId);
+        recordingAudioStreamsRef.current.delete(participantId);
+        continue;
+      }
+      try {
+        if (recordingAudioStreamsRef.current.get(participantId) === stream) continue;
+        recordingSourcesRef.current.get(participantId)?.disconnect();
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(destination);
+        recordingSourcesRef.current.set(participantId, source);
+        recordingAudioStreamsRef.current.set(participantId, stream);
+      } catch (recordingError) {
+        console.error("Could not add participant audio to recording:", recordingError);
+      }
+    }
+  }, [localStream, recording, remoteStreams]);
 
   const startScreenShare = async () => {
     if (!settings.screenShareEnabled) {
@@ -722,11 +1290,36 @@ export default function CallRoomPage() {
     socketRef.current?.emit("call:update", { handRaised: nextRaised });
   };
 
+  const broadcastSecurePacket = (packet: SecureCallPacket) => {
+    const serialized = JSON.stringify(packet);
+    for (const [peerUserId, channel] of dataChannelsRef.current) {
+      if (channel.readyState !== "open") continue;
+      try {
+        channel.send(serialized);
+      } catch (sendError) {
+        console.error(`Could not send encrypted peer chat to ${peerUserId}:`, sendError);
+      }
+    }
+  };
+
   const sendMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const text = messageText.trim();
     if (!text || !settings.chatEnabled) return;
-    socketRef.current?.emit("call:chat", { text });
+    const message: ChatMessage = {
+      id: crypto.randomUUID(),
+      userId: currentUserId,
+      name: user?.channelname || user?.username || user?.name || "You",
+      text,
+      sentAt: Date.now(),
+    };
+    broadcastSecurePacket({
+      kind: "text",
+      id: message.id,
+      text,
+      sentAt: message.sentAt,
+    });
+    setMessages((current) => [...current.slice(-99), message]);
     setMessageText("");
   };
 
@@ -749,9 +1342,35 @@ export default function CallRoomPage() {
         reader.onerror = () => reject(new Error("Could not read attachment"));
         reader.readAsDataURL(file);
       });
-      socketRef.current?.emit("call:chat", {
-        attachment: { name: file.name, type: file.type, dataUrl },
+      const id = crypto.randomUUID();
+      const sentAt = Date.now();
+      const chunkSize = 12_000;
+      const chunks = Array.from(
+        { length: Math.ceil(dataUrl.length / chunkSize) },
+        (_, index) => dataUrl.slice(index * chunkSize, (index + 1) * chunkSize),
+      );
+      broadcastSecurePacket({
+        kind: "file-start",
+        id,
+        name: file.name.slice(0, 140),
+        mime: file.type,
+        sentAt,
+        totalChunks: chunks.length,
       });
+      chunks.forEach((chunk, index) =>
+        broadcastSecurePacket({ kind: "file-chunk", id, index, chunk }),
+      );
+      setMessages((current) => [
+        ...current.slice(-99),
+        {
+          id,
+          userId: currentUserId,
+          name: user?.channelname || user?.username || user?.name || "You",
+          text: "",
+          sentAt,
+          attachment: { name: file.name, type: file.type, dataUrl },
+        },
+      ]);
     } catch (fileError) {
       console.error("Could not share file:", fileError);
       toast.error("Could not read the file.");
@@ -854,6 +1473,22 @@ export default function CallRoomPage() {
         </div>
       </header>
 
+      {error && (
+        <p role="status" className="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">
+          {error}
+        </p>
+      )}
+      {!hasTurnServer && (
+        <p role="status" className="mb-4 rounded-lg border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm text-sky-100">
+          No TURN relay is configured. Calls may not connect on restrictive networks.
+        </p>
+      )}
+      {recording && (
+        <p role="status" className="mb-4 flex items-center gap-2 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-2 text-sm text-red-100">
+          <Circle className="h-3 w-3 fill-current" /> This meeting is being recorded locally by the host.
+        </p>
+      )}
+
       <div className={`grid gap-4 ${chatOpen ? "xl:grid-cols-[minmax(0,1fr)_340px]" : "grid-cols-1"}`}>
         <section>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -864,6 +1499,10 @@ export default function CallRoomPage() {
               cameraEnabled={cameraEnabled || sharingScreen}
               speaking={speakingUsers.has(currentUserId)}
               local
+              onVideoElement={(element) => {
+                if (element) recordingVideoElementsRef.current.set(currentUserId, element);
+                else recordingVideoElementsRef.current.delete(currentUserId);
+              }}
             />
             {participants
               .filter((participant) => participant.userId !== currentUserId)
@@ -875,15 +1514,22 @@ export default function CallRoomPage() {
                   muted={participant.muted}
                   cameraEnabled={participant.cameraEnabled || participant.screenSharing}
                   speaking={speakingUsers.has(participant.userId)}
+                  onVideoElement={(element) => {
+                    if (element) {
+                      recordingVideoElementsRef.current.set(participant.userId, element);
+                    } else {
+                      recordingVideoElementsRef.current.delete(participant.userId);
+                    }
+                  }}
                 />
               ))}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <button type="button" onClick={toggleMicrophone} aria-label={muted ? "Unmute microphone" : "Mute microphone"} className={`rounded-full p-3 ${muted ? "bg-red-600" : "bg-zinc-800 hover:bg-zinc-700"}`}>
+            <button type="button" onClick={toggleMicrophone} disabled={!hasMicrophone} aria-label={muted ? "Unmute microphone" : "Mute microphone"} className={`rounded-full p-3 ${muted ? "bg-red-600" : "bg-zinc-800 hover:bg-zinc-700"} disabled:cursor-not-allowed disabled:opacity-40`}>
               {muted ? <MicOff /> : <Mic />}
             </button>
-            <button type="button" onClick={toggleCamera} aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"} className={`rounded-full p-3 ${!cameraEnabled ? "bg-red-600" : "bg-zinc-800 hover:bg-zinc-700"}`}>
+            <button type="button" onClick={toggleCamera} disabled={!hasCamera || sharingScreen} aria-label={cameraEnabled ? "Turn camera off" : "Turn camera on"} className={`rounded-full p-3 ${!cameraEnabled ? "bg-red-600" : "bg-zinc-800 hover:bg-zinc-700"} disabled:cursor-not-allowed disabled:opacity-40`}>
               {cameraEnabled ? <Camera /> : <CameraOff />}
             </button>
             <button type="button" disabled={!settings.screenShareEnabled} onClick={() => void (sharingScreen ? stopScreenShare() : startScreenShare())} aria-label="Share screen" className="rounded-full bg-zinc-800 p-3 hover:bg-zinc-700 disabled:opacity-40">
@@ -919,7 +1565,24 @@ export default function CallRoomPage() {
                   <input type="checkbox" checked={settings.screenShareEnabled} disabled={!isHost} onChange={(event) => socketRef.current?.emit("call:permissions", { screenShareEnabled: event.target.checked })} />
                   Allow screen sharing
                 </label>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={() => recording ? stopRecording() : startRecording()}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                      recording
+                        ? "border-red-500/60 bg-red-500/15 text-red-200"
+                        : "border-white/15 hover:bg-white/10"
+                    }`}
+                  >
+                    {recording ? <Download className="h-4 w-4" /> : <Circle className="h-4 w-4 text-red-400" />}
+                    {recording ? "Stop and save recording" : "Record meeting"}
+                  </button>
+                )}
               </div>
+              <p className="mt-3 text-xs text-zinc-400">
+                Recordings are mixed in this browser and downloaded to the host when stopped. Participants are notified while recording; no recording is uploaded to the server.
+              </p>
             </section>
           )}
 

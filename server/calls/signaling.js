@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { Server } from "socket.io";
 import users from "../Modals/Auth.js";
 import { getFirebaseAdminAuth } from "../lib/firebaseAdmin.js";
@@ -12,11 +12,11 @@ import {
   getCallRoom,
   getCallRoomState,
   getPublicParticipants,
+  persistCallRoomSettings,
+  restoreCallRoom,
   scheduleCallParticipantRemoval,
 } from "./rooms.js";
 
-const MAX_CHAT_TEXT_LENGTH = 2_000;
-const MAX_ATTACHMENT_BYTES = 1_000_000;
 const MAX_SIGNAL_BYTES = 512_000;
 const validRoomId = /^[A-F0-9]{12}$/;
 const validSignalTypes = new Set(["offer", "answer", "ice-candidate"]);
@@ -71,6 +71,7 @@ const sendRoomState = (io, room) => {
     locked: room.locked,
     chatEnabled: room.chatEnabled,
     screenShareEnabled: room.screenShareEnabled,
+    recording: Boolean(room.recording),
   });
 };
 
@@ -83,7 +84,7 @@ const emitParticipantRemoved = (io, room, participant, reason) => {
   sendRoomState(io, room);
 };
 
-const endCallRoom = (io, room) => {
+const endCallRoom = async (io, room) => {
   io.to(room.roomId).emit("call:ended");
   for (const participant of room.participants.values()) {
     const connected =
@@ -94,7 +95,7 @@ const endCallRoom = (io, room) => {
     }
     deleteCallParticipant(room, participant.userId);
   }
-  deleteCallRoom(room.roomId);
+  await deleteCallRoom(room.roomId);
 };
 
 export const attachCallSignaling = (httpServer, allowedOrigin) => {
@@ -139,7 +140,7 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
   io.on("connection", (socket) => {
     socket.emit("call:ice-config", { iceServers: getIceServers(socket.data.user.userId) });
 
-    socket.on("call:join", (payload = {}, acknowledge) => {
+    socket.on("call:join", async (payload = {}, acknowledge) => {
       const acknowledgeResult =
         typeof acknowledge === "function" ? acknowledge : () => {};
       if (!payload || typeof payload !== "object") {
@@ -152,7 +153,13 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       if (typeof roomId !== "string" || !validRoomId.test(roomId)) {
         return acknowledgeResult({ error: "Enter a valid meeting code." });
       }
-      const room = getCallRoom(roomId);
+      let room;
+      try {
+        room = await restoreCallRoom(roomId);
+      } catch (error) {
+        console.error("Could not restore call room:", error.message);
+        return acknowledgeResult({ error: "Could not load this meeting right now." });
+      }
       if (!room) return acknowledgeResult({ error: "Meeting not found or expired." });
 
       const userId = socket.data.user.userId;
@@ -160,11 +167,8 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       if (room.locked && userId !== room.hostUserId && !existing) {
         return acknowledgeResult({ error: "The host has locked this meeting." });
       }
-      if (
-        existing?.online &&
-        existing.socketId !== socket.id
-      ) {
-        return acknowledgeResult({ error: "This account is already connected to the meeting." });
+      if (existing?.online && existing.socketId !== socket.id) {
+        io.sockets.sockets.get(existing.socketId)?.disconnect(true);
       }
       if (!existing && room.participants.size >= room.maxParticipants) {
         return acknowledgeResult({
@@ -256,46 +260,6 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       sendRoomState(io, room);
     });
 
-    socket.on("call:chat", (message = {}) => {
-      if (!message || typeof message !== "object") return;
-      const room = getCallRoom(socket.data.roomId);
-      const participant = room?.participants.get(socket.data.user.userId);
-      if (
-        !room?.chatEnabled ||
-        !participant ||
-        participant.socketId !== socket.id
-      ) return;
-      const text = typeof message.text === "string"
-        ? message.text.trim().slice(0, MAX_CHAT_TEXT_LENGTH)
-        : "";
-      let attachment;
-      if (
-        message.attachment &&
-        typeof message.attachment.name === "string" &&
-        typeof message.attachment.type === "string" &&
-        typeof message.attachment.dataUrl === "string" &&
-        /^data:(image\/(png|jpeg|gif|webp)|application\/pdf|text\/plain);base64,/.test(
-          message.attachment.dataUrl,
-        ) &&
-        Buffer.byteLength(message.attachment.dataUrl, "utf8") <= MAX_ATTACHMENT_BYTES
-      ) {
-        attachment = {
-          name: message.attachment.name.slice(0, 140),
-          type: message.attachment.type.slice(0, 100),
-          dataUrl: message.attachment.dataUrl,
-        };
-      }
-      if (!text && !attachment) return;
-      io.to(room.roomId).emit("call:chat", {
-        id: randomUUID(),
-        userId: participant.userId,
-        name: participant.name,
-        text,
-        attachment,
-        sentAt: Date.now(),
-      });
-    });
-
     socket.on("call:moderate", (payload = {}) => {
       if (!payload || typeof payload !== "object") return;
       const { action, targetUserId, value } = payload;
@@ -325,6 +289,7 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       } else if (action === "cohost" && actorId === room.hostUserId) {
         if (value) room.cohostIds.add(target.userId);
         else room.cohostIds.delete(target.userId);
+        persistCallRoomSettings(room);
         sendRoomState(io, room);
       } else if (action === "allow-unmute" && target.mutedByHost) {
         target.mutedByHost = false;
@@ -345,6 +310,7 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
         !canModerateCall(room, socket.data.user.userId)
       ) return;
       room.locked = Boolean(locked);
+      persistCallRoomSettings(room);
       sendRoomState(io, room);
     });
 
@@ -371,13 +337,25 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
           }
         }
       }
+      persistCallRoomSettings(room);
       sendRoomState(io, room);
+    });
+
+    socket.on("call:recording", (payload = {}) => {
+      if (!payload || typeof payload.recording !== "boolean") return;
+      const room = getCallRoom(socket.data.roomId);
+      const actor = room?.participants.get(socket.data.user.userId);
+      if (!room || !actor || actor.socketId !== socket.id || room.hostUserId !== actor.userId) {
+        return;
+      }
+      room.recording = payload.recording;
+      io.to(room.roomId).emit("call:recording", { recording: room.recording });
     });
 
     socket.on("call:end", () => {
       const room = getCallRoom(socket.data.roomId);
       if (!room || room.hostUserId !== socket.data.user.userId) return;
-      endCallRoom(io, room);
+      void endCallRoom(io, room);
     });
 
     socket.on("call:leave", () => {
@@ -387,7 +365,7 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       const participant = room.participants.get(userId);
       if (!participant) return;
       if (userId === room.hostUserId) {
-        endCallRoom(io, room);
+        void endCallRoom(io, room);
         return;
       }
       deleteCallParticipant(room, userId);
@@ -401,6 +379,10 @@ export const attachCallSignaling = (httpServer, allowedOrigin) => {
       if (!room) return;
       const participant = room.participants.get(socket.data.user.userId);
       if (!participant || participant.socketId !== socket.id) return;
+      if (participant.userId === room.hostUserId && room.recording) {
+        room.recording = false;
+        io.to(room.roomId).emit("call:recording", { recording: false });
+      }
       participant.online = false;
       participant.socketId = null;
       io.to(room.roomId).emit("call:participant-offline", {

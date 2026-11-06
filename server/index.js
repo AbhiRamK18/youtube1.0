@@ -43,19 +43,19 @@ app.use("/calls", callRoutes);
 const PORT = process.env.PORT || 5000;
 
 attachCallSignaling(httpServer, allowedOrigin);
-httpServer.listen(PORT, () => {
-  console.log(`server running on port ${PORT}`);
-});
+void startServer();
 
-const DBURL = process.env.DB_URL;
-mongoose
-  .connect(DBURL)
-  .then(() => {
-    console.log("Mongodb connected");
-  })
-  .catch((error) => {
-    console.log(error);
-  }); 
+async function startServer() {
+  try {
+    await connectDB();
+    httpServer.listen(PORT, () => {
+      console.log(`server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Server startup failed because MongoDB is unavailable:", error.message);
+    process.exitCode = 1;
+  }
+}
 
 export async function connectDB() {
   try {

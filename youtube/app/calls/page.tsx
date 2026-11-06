@@ -1,17 +1,33 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useUser } from "@/lib/AuthContext";
 import axiosInstance from "@/lib/axiosinstance";
 import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
 
+const ACTIVE_CALL_STORAGE_KEY = "active-video-call-room";
+
+const subscribeToSavedCall = (onChange: () => void) => {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+};
+
+const getSavedCallSnapshot = () =>
+  typeof window === "undefined"
+    ? null
+    : window.localStorage.getItem(ACTIVE_CALL_STORAGE_KEY);
+
 export default function CallsPage() {
   const router = useRouter();
   const { user } = useUser();
   const [roomId, setRoomId] = useState("");
   const [creating, setCreating] = useState(false);
+  const savedCall = useSyncExternalStore(subscribeToSavedCall, getSavedCallSnapshot, () => null);
+  const savedRoomId = savedCall?.startsWith(`${user?._id}:`)
+    ? savedCall.slice(String(user?._id).length + 1)
+    : "";
 
   const createMeeting = async () => {
     if (!user) {
@@ -22,6 +38,10 @@ export default function CallsPage() {
     try {
       const config = await getFirebaseAuthConfig();
       const response = await axiosInstance.post("/calls/rooms", {}, config);
+      window.localStorage.setItem(
+        ACTIVE_CALL_STORAGE_KEY,
+        `${user._id}:${response.data.roomId}`,
+      );
       router.push(`/calls/${response.data.roomId}`);
     } catch (error) {
       console.error("Could not create meeting:", error);
@@ -84,6 +104,15 @@ export default function CallsPage() {
               Join
             </button>
           </form>
+          {savedRoomId && (
+            <button
+              type="button"
+              onClick={() => router.push(`/calls/${savedRoomId}`)}
+              className="mt-4 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted"
+            >
+              Return to your recent meeting
+            </button>
+          )}
         </section>
         <p className="text-xs text-muted-foreground md:col-span-2">
           This peer-to-peer prototype is limited to four people per meeting. For
