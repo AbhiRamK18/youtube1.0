@@ -8,7 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from "firebase/auth";
 import { useTheme } from "next-themes";
 import { auth, provider } from "./firebase";
 import axiosInstance from "./axiosinstance";
@@ -164,8 +169,22 @@ export const UserProvider = ({ children }) => {
       const result = await signInWithPopup(auth, provider);
       await completeSignIn(result.user);
     } catch (error) {
-      console.error("Google sign-in failed:", error);
-      setAuthError("Google sign-in was cancelled or could not be completed.");
+      let signInError = error;
+      if (error?.code === "auth/popup-blocked") {
+        try {
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError) {
+          console.error("Google sign-in redirect failed:", redirectError);
+          signInError = redirectError;
+        }
+      }
+      console.error("Google sign-in failed:", signInError);
+      setAuthError(
+        signInError?.code === "auth/operation-not-allowed"
+          ? "Google sign-in is disabled for this Firebase project. Enable Google in Firebase Console under Authentication > Sign-in method, then try again."
+          : "Google sign-in was cancelled or could not be completed.",
+      );
       setIsSigningIn(false);
     } finally {
       if (locationRequest.current === requestedLocation) {

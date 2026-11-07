@@ -230,6 +230,14 @@ export default function VideoPlayer({
         if (otherVideo !== player) otherVideo.pause();
       });
       void player.play().catch((playError: unknown) => {
+        if (
+          typeof playError === "object" &&
+          playError !== null &&
+          "name" in playError &&
+          playError.name === "AbortError"
+        ) {
+          return;
+        }
         console.error("Unable to start video playback:", playError);
       });
     } else {
