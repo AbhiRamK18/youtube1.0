@@ -10,12 +10,12 @@ import {
 import { getFirebaseAdminAuth } from "../lib/firebaseAdmin.js";
 import { getCityFromCoordinates } from "../lib/reverseGeocode.js";
 import {
+  buildTrustedDeviceCookie,
   findMatchingTrustedDevice,
   hashSecurityValue,
   parseLoginDevice,
 } from "../lib/trustedDevice.js";
 
-const DEVICE_COOKIE = "yt_trusted_device";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
 
@@ -75,18 +75,8 @@ const sendOtp = async (email, code) => {
 };
 
 //nodemailer verification
-const setTrustedCookie = (res, token, expiresAt) => {
-  const signature = hashSecurityValue(token);
-  const sameSite = process.env.AUTH_COOKIE_SAMESITE || "Lax";
-  const secure =
-    process.env.NODE_ENV === "production" || sameSite.toLowerCase() === "none"
-      ? "; Secure"
-      : "";
-  res.setHeader(
-    "Set-Cookie",
-    `${DEVICE_COOKIE}=${token}.${signature}; HttpOnly; SameSite=${sameSite}; Path=/; Expires=${expiresAt.toUTCString()}${secure}`,
-  );
-};
+const setTrustedCookie = (res, token, expiresAt) =>
+  res.setHeader("Set-Cookie", buildTrustedDeviceCookie(token, expiresAt));
 
 // const emailTransport = () => {
  // const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;

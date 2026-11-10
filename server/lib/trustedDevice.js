@@ -11,6 +11,18 @@ export const hashSecurityValue = (value) => {
   return createHmac("sha256", secret).update(value).digest("hex");
 };
 
+export const buildTrustedDeviceCookie = (token, expiresAt) => {
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    process.env.FRONTEND_URL?.startsWith("https://");
+  const sameSite = isProduction
+    ? "None"
+    : process.env.AUTH_COOKIE_SAMESITE || "Lax";
+  const secure = isProduction || sameSite.toLowerCase() === "none";
+
+  return `${DEVICE_COOKIE}=${token}.${hashSecurityValue(token)}; HttpOnly; SameSite=${sameSite}; Path=/; Expires=${expiresAt.toUTCString()}${secure ? "; Secure" : ""}`;
+};
+
 export const parseLoginDevice = (req) => {
   const agent = req.get("user-agent") || "";
   const browserMatch =
@@ -90,13 +102,13 @@ export const findMatchingTrustedDevice = async (req, userId, currentLocation) =>
     trustedUntil: { $gt: new Date() },
     revokedAt: null,
   });
+  // IP addresses can change independently of the trusted browser and device.
   if (
     !trusted ||
     trusted.browser !== device.browser ||
     trusted.operatingSystem !== device.operatingSystem ||
     trusted.deviceType !== device.deviceType ||
     trusted.deviceModel !== device.deviceModel ||
-    trusted.ipAddress !== device.ipAddress ||
     (currentLocation?.city && trusted.city !== currentLocation.city) ||
     (currentLocation?.state && trusted.state !== currentLocation.state)
   ) {
