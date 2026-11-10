@@ -1,5 +1,6 @@
 import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import nodemailer from "nodemailer";
+//import nodemailer from "nodemailer";
+import { google } from "googleapis";
 import users from "../Modals/Auth.js";
 import {
   LoginChallenge,
@@ -18,6 +19,62 @@ const DEVICE_COOKIE = "yt_trusted_device";
 const OTP_TTL_MINUTES = 10;
 const MAX_OTP_ATTEMPTS = 5;
 
+//gmail api email verification
+const sendOtp = async (email, code) => {
+  const {
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET,
+    GMAIL_REFRESH_TOKEN,
+    GMAIL_USER,
+  } = process.env;
+
+  if (
+    !GMAIL_CLIENT_ID ||
+    !GMAIL_CLIENT_SECRET ||
+    !GMAIL_REFRESH_TOKEN ||
+    !GMAIL_USER
+  ) {
+    throw new Error("Gmail API environment variables are missing");
+  }
+
+  const oauth2Client = new google.auth.OAuth2(
+    GMAIL_CLIENT_ID,
+    GMAIL_CLIENT_SECRET,
+    "https://developers.google.com/oauthplayground"
+  );
+
+  oauth2Client.setCredentials({
+    refresh_token: GMAIL_REFRESH_TOKEN,
+  });
+
+  const gmail = google.gmail({
+    version: "v1",
+    auth: oauth2Client,
+  });
+
+  const message = [
+    `From: YourTube <${GMAIL_USER}>`,
+    `To: ${email}`,
+    "Subject: Your YourTube sign-in verification code",
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes. If you did not try to sign in, secure your account.`,
+  ].join("\r\n");
+
+  const raw = Buffer.from(message)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw },
+  });
+};
+
+//nodemailer verification
 const setTrustedCookie = (res, token, expiresAt) => {
   const signature = hashSecurityValue(token);
   const sameSite = process.env.AUTH_COOKIE_SAMESITE || "Lax";
@@ -31,28 +88,28 @@ const setTrustedCookie = (res, token, expiresAt) => {
   );
 };
 
-const emailTransport = () => {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    throw new Error("SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS are required");
-  }
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: Number(SMTP_PORT) === 465,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
-  });
-};
+// const emailTransport = () => {
+ // const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+ // if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
+    //throw new Error("SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASS are required");
+  //}
+  //return nodemailer.createTransport({
+    //host: SMTP_HOST,
+  //  port: Number(SMTP_PORT),
+   // secure: Number(SMTP_PORT) === 465,
+    //auth: { user: SMTP_USER, pass: SMTP_PASS },
+  //});
+//};
 
-const sendOtp = async (email, code) => {
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
-  await emailTransport().sendMail({
-    from,
-    to: email,
-    subject: "Your YourTube sign-in verification code",
-    text: `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes. If you did not try to sign in, secure your account.`,
-  });
-};
+//const sendOtp = async (email, code) => {
+  //const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+  //await emailTransport().sendMail({
+    //from,
+    //to: email,
+    //subject: "Your YourTube sign-in verification code",
+    //text: `Your verification code is ${code}. It expires in ${OTP_TTL_MINUTES} minutes. If you did not try to sign in, secure your account.`,
+  //});
+//};
 
 const defaultTheme = () => {
   const hour = Number(
