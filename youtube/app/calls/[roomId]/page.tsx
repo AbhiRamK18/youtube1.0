@@ -147,7 +147,7 @@ function VideoTile({
           }}
           autoPlay
           playsInline
-          muted={muted}
+          muted={local || muted}
           className={`h-full w-full object-cover ${local ? "-scale-x-100" : ""}`}
         />
       ) : (
@@ -513,7 +513,10 @@ export default function CallRoomPage() {
       localStreamRef.current = stream;
       cameraTrackRef.current = stream.getVideoTracks()[0] || null;
       setLocalStream(stream);
-      setMuted(!stream.getAudioTracks().length);
+      const audioTracks = stream.getAudioTracks();
+      const initiallyMuted =
+        audioTracks.length === 0 || audioTracks.every((track) => !track.enabled);
+      setMuted(initiallyMuted);
       setCameraEnabled(Boolean(cameraTrackRef.current));
       const devices = await navigator.mediaDevices.enumerateDevices();
       setCameras(devices.filter((device) => device.kind === "videoinput"));
@@ -820,7 +823,7 @@ export default function CallRoomPage() {
           setElapsedSeconds(Math.max(0, Math.floor((Date.now() - ack.state.startedAt) / 1000)));
           setPhase("joined");
           socket.emit("call:update", {
-            muted: !localStreamRef.current?.getAudioTracks().length,
+            muted: initiallyMuted,
             cameraEnabled: Boolean(cameraTrackRef.current),
           });
           for (const participant of ack.state.participants) {
@@ -943,7 +946,8 @@ export default function CallRoomPage() {
   };
 
   const toggleMicrophone = () => {
-    if (!localStreamRef.current?.getAudioTracks().length) {
+    const audioTracks = localStreamRef.current?.getAudioTracks() || [];
+    if (!audioTracks.length) {
       toast.error("No microphone is available for this call.");
       return;
     }
@@ -951,8 +955,8 @@ export default function CallRoomPage() {
       toast.error("The host has muted your microphone. Ask them to allow you to unmute.");
       return;
     }
-    const nextMuted = !muted;
-    for (const track of localStreamRef.current?.getAudioTracks() || []) {
+    const nextMuted = audioTracks.some((track) => track.enabled);
+    for (const track of audioTracks) {
       track.enabled = !nextMuted;
     }
     setMuted(nextMuted);
@@ -1499,7 +1503,7 @@ export default function CallRoomPage() {
             <VideoTile
               name={user.channelname || user.username || user.name || "You"}
               stream={localStream || undefined}
-              muted
+              muted={muted}
               cameraEnabled={cameraEnabled || sharingScreen}
               speaking={speakingUsers.has(currentUserId)}
               local
