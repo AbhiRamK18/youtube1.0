@@ -18,7 +18,7 @@ import { useUser } from "@/lib/AuthContext";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
-const Header = () => {
+const Header = ({ onMenuClick }: { onMenuClick: () => void }) => {
   const {
     user,
     logout,
@@ -72,24 +72,31 @@ const Header = () => {
     }
   };
   return (
-    <header className="flex items-center justify-between px-4 py-2 bg-background border-b">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon">
+    <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-x-2 gap-y-2 border-b bg-background px-2 py-2 sm:px-4">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 lg:hidden"
+          aria-label="Open navigation menu"
+          aria-controls="mobile-navigation"
+          onClick={onMenuClick}
+        >
           <Menu className="w-6 h-6" />
         </Button>
-        <Link href="/" className="flex items-center gap-1">
+        <Link href="/" className="flex shrink-0 items-center gap-1">
           <div className="bg-red-600 p-1 rounded">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
               <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
             </svg>
           </div>
-          <span className="text-xl font-medium">YourTube</span>
+          <span className="text-lg font-medium sm:text-xl">YourTube</span>
           <span className="text-xs text-gray-400 ml-1">IN</span>
         </Link>
       </div>
       <form
         onSubmit={handleSearch}
-        className="flex items-center gap-2 flex-1 max-w-2xl mx-4"
+        className="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:mx-2 sm:w-auto sm:max-w-2xl sm:flex-1 lg:mx-4"
       >
         <div className="flex flex-1">
           <Input
@@ -106,11 +113,11 @@ const Header = () => {
             <Search className="w-5 h-5" />
           </Button>
         </div>
-        <Button variant="ghost" size="icon" className="rounded-full">
+        <Button variant="ghost" size="icon" className="hidden rounded-full sm:inline-flex" aria-label="Voice search">
           <Mic className="w-5 h-5" />
         </Button>
       </form>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-0 sm:gap-2">
         {user ? (
           <>
             <Button
@@ -208,6 +215,7 @@ const Header = () => {
         )}{" "}
       </div>
       <Channeldialogue
+        key={`${isdialogeopen}-${user?.name || ""}`}
         isopen={isdialogeopen}
         onclose={() => setisdialogeopen(false)}
         mode="create"

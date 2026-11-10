@@ -130,7 +130,7 @@ export default function CommentModerationPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-5 p-6">
+    <main className="mx-auto w-full max-w-5xl space-y-5 p-3 sm:p-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Comment moderation</h1>

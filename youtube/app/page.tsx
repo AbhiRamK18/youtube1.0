@@ -4,7 +4,7 @@ import { Suspense } from "react";
 
 export default function Home() {
   return (
-    <main className="flex-1 p-4">
+    <main className="min-w-0 flex-1 p-3 sm:p-4">
       <CategoryTabs />
       <Suspense fallback={<div>Loading videos...</div>}>
         <Videosgrid />

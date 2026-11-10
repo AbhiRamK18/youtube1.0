@@ -25,7 +25,7 @@ const CategoryTabs = () => {
         <Button
           key={category}
           variant={activeCategory === category ? "default" : "secondary"}
-          className="whitespace-nowrap"
+          className="min-h-11 whitespace-nowrap"
           onClick={() => setActiveCategory(category)}
         >
           {category}

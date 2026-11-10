@@ -309,10 +309,32 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    width: 100%;
+    overflow-x: clip;
+    @apply font-sans;
+  }
   body {
     @apply bg-background text-foreground;
+    min-width: 320px;
+    width: 100%;
+    overflow-x: clip;
   }
-  html {
-    @apply font-sans;
+  main,
+  section,
+  article {
+    min-width: 0;
+  }
+  img,
+  video,
+  canvas,
+  iframe {
+    max-width: 100%;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    max-width: 100%;
   }
 }

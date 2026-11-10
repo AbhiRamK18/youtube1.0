@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import Header from "@/components/Header";
-import Sidebar from "@/components/Sidebar";
+import ResponsiveShell from "@/components/ResponsiveShell";
 import { Toaster } from "@/components/ui/sonner";
 import { UserProvider } from "@/lib/AuthContext";
 import { ThemeProvider } from "next-themes";
@@ -18,12 +17,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
           <UserProvider>
             <div className="min-h-screen bg-background text-foreground">
-              <Header />
               <Toaster />
-              <div className="flex">
-                <Sidebar />
-                {children}
-              </div>
+              <ResponsiveShell>{children}</ResponsiveShell>
             </div>
           </UserProvider>
         </ThemeProvider>

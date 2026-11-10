@@ -630,12 +630,12 @@ const Comments = ({ videoId }: { videoId: string }) => {
       </div>
 
       {user && (
-        <div className="flex gap-4">
+        <div className="flex min-w-0 gap-3 sm:gap-4">
           <Avatar className="w-10 h-10">
             <AvatarImage src={user.image || ""} />
             <AvatarFallback>{user.name?.[0] || "U"}</AvatarFallback>
           </Avatar>
-          <div className="flex-1 space-y-2">
+          <div className="min-w-0 flex-1 space-y-2">
             <Textarea
               placeholder="Add a comment..."
               value={newComment}
@@ -659,7 +659,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                 {commentError}
               </p>
             )}
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button
                 variant="ghost"
                 onClick={() => setNewComment("")}
@@ -688,13 +688,13 @@ const Comments = ({ videoId }: { videoId: string }) => {
           </p>
         ) : (
           sortedComments.map((comment) => (
-            <div key={comment._id} className="flex gap-4">
+            <div key={comment._id} className="flex min-w-0 gap-3 sm:gap-4">
               <Avatar className="w-10 h-10">
                 <AvatarImage src={comment.avatar || comment.image || ""} />
                 <AvatarFallback>{comment.usercommented[0]}</AvatarFallback>
               </Avatar>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-medium text-sm">
                     {comment.usercommented}
                   </span>

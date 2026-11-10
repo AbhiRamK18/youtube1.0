@@ -85,8 +85,8 @@ export default function WatchPage() {
   const nextVideo = allVideos[currentVideoIndex + 1];
 
   return (
-    <div className="min-h-screen bg-white">
-      <div className="mx-auto max-w-7xl p-4">
+    <div className="min-h-screen min-w-0 bg-white">
+      <div className="mx-auto max-w-7xl p-2 sm:p-4">
         <div
           className={`grid grid-cols-1 gap-6 ${
             theaterMode ? "" : "lg:grid-cols-3"
@@ -104,7 +104,7 @@ export default function WatchPage() {
             <Comments videoId={id} />
           </div>
 
-          <div className={`space-y-4 ${theaterMode ? "lg:grid lg:grid-cols-2 lg:gap-4" : ""}`}>
+          <div className={`min-w-0 space-y-4 ${theaterMode ? "lg:grid lg:grid-cols-2 lg:gap-4" : ""}`}>
             <RelatedVideos videos={allVideos} />
           </div>
         </div>

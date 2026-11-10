@@ -228,7 +228,7 @@ export default function SubscriptionsPage() {
   const currentPlanId = dashboard?.currentPlan?.id || "free";
 
   return (
-    <main className="min-w-0 flex-1 space-y-6 p-6">
+    <main className="min-w-0 flex-1 space-y-6 p-3 sm:p-6">
       <header>
         <h1 className="text-2xl font-bold">Subscription plans</h1>
         <p className="mt-1 text-sm text-muted-foreground">

@@ -9,7 +9,13 @@ import { Progress } from "./ui/progress";
 import axiosInstance from "@/lib/axiosinstance";
 import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
 
-const VideoUploader = ({ channelId, channelName }: any) => {
+const VideoUploader = ({
+  channelId,
+  channelName,
+}: {
+  channelId: string;
+  channelName?: string;
+}) => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -73,7 +79,7 @@ const VideoUploader = ({ channelId, channelName }: any) => {
       setIsUploading(true);
       setUploadProgress(0);
       const authConfig = await getFirebaseAuthConfig();
-      const res = await axiosInstance.post("/video/upload", formdata, {
+      await axiosInstance.post("/video/upload", formdata, {
         ...authConfig,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onUploadProgress: (progresEvent: any) => {
@@ -95,13 +101,13 @@ const VideoUploader = ({ channelId, channelName }: any) => {
     }
   };
   return (
-    <div className="bg-gray-50 rounded-lg p-6">
+    <div className="min-w-0 rounded-lg bg-gray-50 p-4 sm:p-6">
       <h2 className="text-xl font-semibold mb-4">Upload a video</h2>
 
       <div className="space-y-4">
         {!videoFile ? (
           <div
-            className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:bg-gray-100 transition-colors"
+            className="cursor-pointer rounded-lg border-2 border-dashed border-gray-300 p-5 text-center transition-colors hover:bg-gray-100 sm:p-8"
             onClick={() => fileInputRef.current?.click()}
           >
             <Upload className="w-12 h-12 mx-auto text-gray-400 mb-2" />
@@ -195,7 +201,7 @@ const VideoUploader = ({ channelId, channelName }: any) => {
               </label>
             )}
 
-            <div className="flex justify-end gap-3">
+            <div className="flex flex-wrap justify-end gap-3">
               {!uploadComplete && (
                 <>
                   <Button onClick={cancelUpload} disabled={uploadComplete}>

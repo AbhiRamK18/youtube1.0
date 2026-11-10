@@ -176,25 +176,25 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
   };
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">{video.videotitle}</h1>
+      <h1 className="break-words text-xl font-semibold">{video.videotitle}</h1>
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <Avatar className="w-10 h-10">
             <AvatarFallback>{video.videochanel[0]}</AvatarFallback>
           </Avatar>
-          <div>
+          <div className="min-w-0">
             <h3 className="font-medium">{video.videochanel}</h3>
             <p className="text-sm text-gray-600">1.2M subscribers</p>
           </div>
-          <Button className="ml-4">Subscribe</Button>
+          <Button className="min-h-11">Subscribe</Button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex items-center bg-gray-100 rounded-full">
             <Button
               variant="ghost"
               size="sm"
-              className="rounded-l-full"
+              className="min-h-11 rounded-l-full"
               onClick={handleLike}
             >
               <ThumbsUp
@@ -208,7 +208,7 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
             <Button
               variant="ghost"
               size="sm"
-              className="rounded-r-full"
+              className="min-h-11 rounded-r-full"
               onClick={handleDislike}
             >
               <ThumbsDown
@@ -222,7 +222,7 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
           <Button
             variant="ghost"
             size="sm"
-            className={`bg-gray-100 rounded-full ${
+            className={`min-h-11 rounded-full bg-gray-100 ${
               isWatchLater ? "text-primary" : ""
             }`}
             onClick={handleWatchLater}
@@ -233,7 +233,7 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
           <Button
             variant="ghost"
             size="sm"
-            className="bg-gray-100 rounded-full"
+            className="min-h-11 rounded-full bg-gray-100"
           >
             <Share className="w-5 h-5 mr-2" />
             Share
@@ -241,7 +241,7 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
           <Button
             variant="ghost"
             size="sm"
-            className="bg-gray-100 rounded-full"
+            className="min-h-11 rounded-full bg-gray-100"
             disabled={isDownloading}
             onClick={() => void handleDownload()}
           >
@@ -251,14 +251,14 @@ const VideoInfo = ({ video }: VideoInfoProps) => {
           <Button
             variant="ghost"
             size="icon"
-            className="bg-gray-100 rounded-full"
+            className="min-h-11 rounded-full bg-gray-100"
           >
             <MoreHorizontal className="w-5 h-5" />
           </Button>
         </div>
       </div>
       <div className="bg-gray-100 rounded-lg p-4">
-        <div className="flex gap-4 text-sm font-medium mb-2">
+        <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
           <span>{video.views.toLocaleString()} views</span>
           <span>{formatDistanceToNow(new Date(video.createdAt))} ago</span>
         </div>

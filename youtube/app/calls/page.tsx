@@ -66,9 +66,9 @@ export default function CallsPage() {
   };
 
   return (
-    <main className="min-w-0 flex-1 p-6">
-      <div className="mx-auto mt-10 grid max-w-4xl gap-6 md:grid-cols-2">
-        <section className="rounded-2xl border bg-card p-7">
+    <main className="min-w-0 flex-1 p-3 sm:p-6">
+      <div className="mx-auto mt-4 grid max-w-4xl gap-4 sm:mt-10 sm:gap-6 md:grid-cols-2">
+        <section className="min-w-0 rounded-2xl border bg-card p-4 sm:p-7">
           <h1 className="text-2xl font-bold">Start a video call</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Create a private meeting for up to four signed-in participants.
@@ -82,12 +82,12 @@ export default function CallsPage() {
             {creating ? "Creating…" : "Create meeting"}
           </button>
         </section>
-        <section className="rounded-2xl border bg-card p-7">
+        <section className="min-w-0 rounded-2xl border bg-card p-4 sm:p-7">
           <h2 className="text-2xl font-bold">Join a meeting</h2>
           <p className="mt-2 text-sm text-muted-foreground">
             Ask the host for their 12-character meeting code.
           </p>
-          <form onSubmit={joinMeeting} className="mt-6 flex gap-2">
+          <form onSubmit={joinMeeting} className="mt-6 flex min-w-0 flex-wrap gap-2">
             <input
               aria-label="Meeting code"
               autoComplete="off"
@@ -95,11 +95,11 @@ export default function CallsPage() {
               value={roomId}
               onChange={(event) => setRoomId(event.target.value.toUpperCase())}
               placeholder="A1B2C3D4E5F6"
-              className="min-w-0 flex-1 rounded-lg border bg-background px-3 py-2 font-mono uppercase"
+              className="min-w-[0] flex-1 rounded-lg border bg-background px-3 py-2 font-mono uppercase"
             />
             <button
               type="submit"
-              className="rounded-lg border px-4 py-2 font-medium hover:bg-muted"
+              className="min-h-11 rounded-lg border px-4 py-2 font-medium hover:bg-muted"
             >
               Join
             </button>

@@ -5,12 +5,13 @@ import VideoCard from "./videocard";
 import { Button } from "./ui/button";
 import axiosInstance from "@/lib/axiosinstance";
 import { getFirebaseAuthConfig } from "@/lib/firebaseAuthConfig";
+import type { Video } from "@/lib/types";
 
 export default function ChannelVideos({
   videos,
   isOwner = false,
 }: {
-  videos: any[];
+  videos: Video[];
   isOwner?: boolean;
 }) {
   const [savingVideo, setSavingVideo] = useState<string | null>(null);
@@ -18,7 +19,7 @@ export default function ChannelVideos({
   const [selectedPlans, setSelectedPlans] = useState<Record<string, string>>({});
 
   const updateAccess = async (
-    video: any,
+    video: Video,
     premiumOnly: boolean,
     minimumPlan: string,
   ) => {
@@ -51,8 +52,8 @@ export default function ChannelVideos({
     <div>
       <h2 className="text-xl font-semibold mb-4">Videos</h2>
       {error && <p role="alert" className="mb-3 text-sm text-destructive">{error}</p>}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {videos.map((video: any) => (
+      <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-4">
+        {videos.map((video) => (
           <div key={video._id} className="space-y-2">
             <VideoCard video={video} />
             {isOwner && (

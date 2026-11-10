@@ -19,9 +19,9 @@ export default function RelatedVideos({ videos }: RelatedVideosProps) {
         <Link
           key={video._id}
           href={`/watch/${video._id}`}
-          className="flex gap-2 group"
+          className="group flex min-w-0 gap-2"
         >
-          <div className="relative w-40 aspect-video bg-gray-100 rounded overflow-hidden flex-shrink-0">
+          <div className="relative w-[min(40%,10rem)] shrink-0 aspect-video overflow-hidden rounded bg-gray-100 sm:w-40">
             <video
               src={getVideoUrl(video.filepath)}
               className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"

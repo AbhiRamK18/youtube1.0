@@ -6,58 +6,50 @@ import { formatDistanceToNow } from "date-fns";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import axiosInstance from "@/lib/axiosinstance";
 import { getVideoUrl } from "@/lib/videoUrl";
+import type { Video } from "@/lib/types";
 
-const SearchResult = ({ query }: any) => {
-  const [videos, setVideos] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+const SearchResult = ({ query }: { query: string }) => {
+  const [result, setResult] = useState<{
+    query: string;
+    videos: Video[];
+    error: boolean;
+  }>({ query: "", videos: [], error: false });
 
   useEffect(() => {
     let cancelled = false;
     const searchQuery = query.trim().toLowerCase();
 
-    if (!searchQuery) {
-      setVideos([]);
-      setLoading(false);
-      setLoadError(false);
-      return;
-    }
-
-    setLoading(true);
-    setLoadError(false);
+    if (!searchQuery) return;
     axiosInstance
-      .get("/video/getall")
+      .get<Video[]>("/video/getall")
       .then((response) => {
         const allVideos = Array.isArray(response.data) ? response.data : [];
         const results = allVideos.filter(
-          (video: any) =>
+          (video) =>
             video.videotitle?.toLowerCase().includes(searchQuery) ||
             video.videochanel?.toLowerCase().includes(searchQuery)
         );
 
         if (!cancelled) {
-          setVideos(results);
+          setResult({ query: searchQuery, videos: results, error: false });
         }
       })
       .catch((error) => {
         console.error("Failed to search videos:", error);
         if (!cancelled) {
-          setLoadError(true);
-          setVideos([]);
+          setResult({ query: searchQuery, videos: [], error: true });
         }
       })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      });
 
     return () => {
       cancelled = true;
     };
   }, [query]);
 
-  if (!query.trim()) {
+  const searchQuery = query.trim().toLowerCase();
+  const currentResult = result.query === searchQuery ? result : null;
+
+  if (!searchQuery) {
     return (
       <div className="py-12 text-center">
         <p className="text-gray-600">Enter a search term to find videos.</p>
@@ -65,11 +57,11 @@ const SearchResult = ({ query }: any) => {
     );
   }
 
-  if (loading) {
+  if (!currentResult) {
     return <div className="py-12 text-center">Searching videos...</div>;
   }
 
-  if (loadError) {
+  if (currentResult.error) {
     return (
       <div className="py-12 text-center">
         <p>Unable to load search results. Please try again.</p>
@@ -77,7 +69,7 @@ const SearchResult = ({ query }: any) => {
     );
   }
 
-  if (videos.length === 0) {
+  if (currentResult.videos.length === 0) {
     return (
       <div className="text-center py-12">
         <h2 className="text-xl font-semibold mb-2">No results found</h2>
@@ -91,10 +83,10 @@ const SearchResult = ({ query }: any) => {
   return (
     <div className="space-y-6">
       <div className="space-y-4">
-        {videos.map((video: any) => (
-          <div key={video._id} className="flex gap-4 group">
-              <Link href={`/watch/${video._id}`} className="flex-shrink-0">
-                <div className="relative w-80 aspect-video bg-gray-100 rounded-lg overflow-hidden">
+        {currentResult.videos.map((video) => (
+          <div key={video._id} className="group flex min-w-0 flex-col gap-3 sm:flex-row sm:gap-4">
+              <Link href={`/watch/${video._id}`} className="block w-full shrink-0 sm:w-56 lg:w-80">
+                <div className="relative aspect-video overflow-hidden rounded-lg bg-gray-100">
                   <video
                     src={getVideoUrl(video.filepath)}
                     className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
@@ -108,7 +100,7 @@ const SearchResult = ({ query }: any) => {
                 </div>
               </Link>
 
-              <div className="flex-1 min-w-0 py-1">
+              <div className="min-w-0 flex-1 py-1">
                 <Link href={`/watch/${video._id}`}>
                   <h3 className="font-medium text-lg line-clamp-2 group-hover:text-blue-600 mb-2">
                     {video.videotitle}
@@ -150,7 +142,7 @@ const SearchResult = ({ query }: any) => {
 
       <div className="text-center py-8">
         <p className="text-gray-600">
-          Showing {videos.length} results for "{query}"
+          Showing {currentResult.videos.length} results for &quot;{query}&quot;
         </p>
       </div>
     </div>

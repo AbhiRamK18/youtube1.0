@@ -80,7 +80,7 @@ const Videogrid = () => {
   //   },
   //  ];
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-4">
       {loading ? (
         <>Loading..</>
       ) : loadError ? (

@@ -7,12 +7,12 @@ import { Suspense } from "react";
 function SearchResults() {
   const q = useSearchParams().get("q") ?? "";
   return (
-    <div className="flex-1 p-4">
+    <div className="min-w-0 flex-1 p-3 sm:p-4">
       <div className="max-w-6xl">
         {q.trim() && (
           <div className="mb-6">
             <h1 className="text-xl font-medium mb-4">
-              Search results for "{q}"
+              Search results for &quot;{q}&quot;
             </h1>
           </div>
         )}

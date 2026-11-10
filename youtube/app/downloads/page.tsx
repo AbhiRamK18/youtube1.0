@@ -77,7 +77,7 @@ export default function DownloadsPage() {
 
   if (!user) {
     return (
-      <main className="flex-1 p-6">
+      <main className="flex-1 p-3 sm:p-6">
         <h1 className="text-2xl font-bold">Downloads</h1>
         <p className="mt-2 text-muted-foreground">Sign in to view your download history.</p>
       </main>
@@ -86,7 +86,7 @@ export default function DownloadsPage() {
 
   const quota = data?.quota;
   return (
-    <main className="min-w-0 flex-1 space-y-6 p-6">
+    <main className="min-w-0 flex-1 space-y-6 p-3 sm:p-6">
       <header>
         <h1 className="text-2xl font-bold">Downloads</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -114,7 +114,7 @@ export default function DownloadsPage() {
       ) : (
         <section className="space-y-3">
           {data.downloads.map((download) => (
-            <article key={download._id} className="flex flex-wrap items-center gap-4 rounded-lg border bg-card p-4">
+            <article key={download._id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border bg-card p-3 sm:gap-4 sm:p-4">
               {download.videoId?.thumbnail ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -142,7 +142,7 @@ export default function DownloadsPage() {
                     const videoId = download.videoId?._id;
                     if (videoId) void handleDownloadAgain(videoId);
                   }}
-                  className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+                  className="min-h-11 w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50 sm:w-auto"
                 >
                   {busyId === (download.videoId?._id || "") ? "Preparing…" : "Download again"}
                 </button>

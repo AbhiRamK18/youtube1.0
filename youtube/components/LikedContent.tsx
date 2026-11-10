@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { formatDistanceToNow } from "date-fns";
 import { MoreVertical, X, ThumbsUp, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,31 +14,33 @@ import {
 import { useUser } from "@/lib/AuthContext";
 import axiosInstance from "@/lib/axiosinstance";
 import { getVideoUrl } from "@/lib/videoUrl";
+import type { PlaylistItem } from "@/lib/types";
 
 export default function LikedVideosContent() {
-  const [likedVideos, setLikedVideos] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [likedVideos, setLikedVideos] = useState<PlaylistItem[]>([]);
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const { user } = useUser();
+  const loading = Boolean(user && loadedUserId !== user._id);
 
   useEffect(() => {
-    if (user) {
-      loadLikedVideos();
-    }
-  }, [user]);
-
-  const loadLikedVideos = async () => {
     if (!user) return;
-
-    try {
-      const likedData = await axiosInstance.get(`/like/${user?._id}`);
-
-      setLikedVideos(likedData.data);
-    } catch (error) {
-      console.error("Error loading liked videos:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    let active = true;
+    const loadLikedVideos = async () => {
+      try {
+        const likedData = await axiosInstance.get<PlaylistItem[]>(`/like/${user._id}`);
+        if (active) setLikedVideos(likedData.data);
+      } catch (error) {
+        console.error("Error loading liked videos:", error);
+        if (active) setLikedVideos([]);
+      } finally {
+        if (active) setLoadedUserId(user._id);
+      }
+    };
+    void loadLikedVideos();
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   const handleUnlikeVideo = async (videoId: string, likedVideoId: string) => {
     if (!user) return;
@@ -64,9 +65,7 @@ export default function LikedVideosContent() {
     );
   }
 
-  if (loading) {
-    return <div>Loading liked videos...</div>;
-  }
+  if (loading) return <div>Loading liked videos...</div>;
 
   if (likedVideos.length === 0) {
     return (
@@ -89,9 +88,9 @@ export default function LikedVideosContent() {
 
       <div className="space-y-4">
         {likedVideos.map((item) => (
-          <div key={item._id} className="flex gap-4 group">
-            <Link href={`/watch/${item.videoid._id}`} className="flex-shrink-0">
-              <div className="relative w-40 aspect-video bg-gray-100 rounded overflow-hidden">
+          <div key={item._id} className="group flex min-w-0 flex-col gap-3 sm:flex-row sm:gap-4">
+            <Link href={`/watch/${item.videoid._id}`} className="block w-full shrink-0 sm:w-40">
+              <div className="relative aspect-video overflow-hidden rounded bg-gray-100">
                 <video
                   src={getVideoUrl(item.videoid?.filepath)}
                   className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
@@ -126,7 +125,7 @@ export default function LikedVideosContent() {
                   <Button
                   variant="ghost"
                   size="icon"
-                  className="opacity-0 group-hover:opacity-100"
+                  className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                   >
                     <MoreVertical className="w-4 h-4" />
                   </Button>

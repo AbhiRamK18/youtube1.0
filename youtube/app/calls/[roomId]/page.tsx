@@ -1252,6 +1252,10 @@ export default function CallRoomPage() {
       socketRef.current?.emit("call:update", { screenSharing: true });
       track.onended = () => void stopScreenShare();
     } catch (shareError) {
+      if (shareError instanceof DOMException && shareError.name === "NotAllowedError") {
+        toast.message("Screen sharing was denied or cancelled. Allow it in your browser and try again.");
+        return;
+      }
       console.error("Could not share screen:", shareError);
       toast.error("Screen sharing was cancelled or could not start.");
     }

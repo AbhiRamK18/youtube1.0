@@ -691,7 +691,7 @@ export default function VideoPlayer({
         }`}
       >
         <div
-          className="group/timeline relative mb-2 flex h-5 cursor-pointer items-center"
+          className="group/timeline relative mb-2 flex h-11 cursor-pointer items-center"
           onMouseMove={handleTimelineHover}
           onMouseLeave={() => setPreview(null)}
           onClick={(event) => {
@@ -739,15 +739,15 @@ export default function VideoPlayer({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-          <button type="button" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback} className="hover:text-gray-300">
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm sm:gap-x-3 sm:gap-y-2">
+          <button type="button" aria-label={playing ? "Pause" : "Play"} onClick={togglePlayback} className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300">
             {playing ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
           </button>
           <button
             type="button"
             aria-label="Seek backward 10 seconds"
             onClick={() => seekTo(currentTime - 10)}
-            className="hover:text-gray-300"
+            className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300"
           >
             <RotateCcw className="h-5 w-5" />
           </button>
@@ -755,7 +755,7 @@ export default function VideoPlayer({
             type="button"
             aria-label="Seek forward 10 seconds"
             onClick={() => seekTo(currentTime + 10)}
-            className="hover:text-gray-300"
+            className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300"
           >
             <RotateCw className="h-5 w-5" />
           </button>
@@ -768,7 +768,7 @@ export default function VideoPlayer({
               player.muted = !player.muted;
               setMuted(player.muted);
             }}
-            className="hover:text-gray-300"
+            className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300"
           >
             {muted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
           </button>
@@ -796,7 +796,7 @@ export default function VideoPlayer({
             {duration > 0 && ` (-${formatTime(duration - currentTime)})`}
           </span>
           {quality && <span className="hidden text-xs text-white/80 sm:inline">{quality}</span>}
-          <label className="ml-auto flex items-center gap-1">
+          <label className="ml-auto flex min-h-11 items-center gap-1">
             <span className="sr-only">Playback speed</span>
             <select
               aria-label="Playback speed"
@@ -815,7 +815,9 @@ export default function VideoPlayer({
               aria-label={captionsEnabled ? "Turn captions off" : "Turn captions on"}
               aria-pressed={captionsEnabled}
               onClick={toggleCaptions}
-              className={captionsEnabled ? "text-blue-300" : "hover:text-gray-300"}
+              className={`flex h-11 w-11 shrink-0 items-center justify-center ${
+                captionsEnabled ? "text-blue-300" : "hover:text-gray-300"
+              }`}
             >
               <Captions className="h-5 w-5" />
             </button>
@@ -833,12 +835,12 @@ export default function VideoPlayer({
               type="button"
               aria-label="Picture in Picture"
               onClick={() => void togglePictureInPicture()}
-              className="hover:text-gray-300"
+              className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300"
             >
               <PictureInPicture className="h-5 w-5" />
             </button>
           )}
-          <button type="button" aria-label="Toggle fullscreen" onClick={() => void toggleFullscreen()} className="hover:text-gray-300">
+          <button type="button" aria-label="Toggle fullscreen" onClick={() => void toggleFullscreen()} className="flex h-11 w-11 shrink-0 items-center justify-center hover:text-gray-300">
             {isFullscreen
               ? <Minimize className="h-5 w-5" />
               : <Maximize className="h-5 w-5" />}

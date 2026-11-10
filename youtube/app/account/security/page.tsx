@@ -85,7 +85,7 @@ export default function AccountSecurityPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-8 p-6">
+    <main className="mx-auto w-full max-w-4xl space-y-6 p-3 sm:space-y-8 sm:p-6">
       <header>
         <h1 className="text-2xl font-semibold">Account security</h1>
         <p className="mt-1 text-sm text-muted-foreground">

@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import React, { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import React, { ChangeEvent, FormEvent, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -14,8 +14,24 @@ import { Textarea } from "./ui/textarea";
 import { Button } from "./ui/button";
 import axiosInstance from "@/lib/axiosinstance";
 import { useUser } from "@/lib/AuthContext";
+import { toast } from "sonner";
 
-const Channeldialogue = ({ isopen, onclose, channeldata, mode }: any) => {
+type ChannelData = {
+  name?: string;
+  description?: string;
+};
+
+const Channeldialogue = ({
+  isopen,
+  onclose,
+  channeldata,
+  mode,
+}: {
+  isopen: boolean;
+  onclose: () => void;
+  channeldata?: ChannelData | null;
+  mode: "create" | "edit";
+}) => {
   const { user, login } = useUser();
   // const user: any = {
   //   id: "1",
@@ -24,24 +40,11 @@ const Channeldialogue = ({ isopen, onclose, channeldata, mode }: any) => {
   //   image: "https://github.com/shadcn.png?height=32&width=32",
   // };
   const router = useRouter();
-  const [formData, setFormData] = useState({
-    name: "",
-    description: "",
-  });
+  const [formData, setFormData] = useState(() => ({
+    name: mode === "edit" ? channeldata?.name || "" : user?.name || "",
+    description: mode === "edit" ? channeldata?.description || "" : "",
+  }));
   const [isSubmitting, setisSubmitting] = useState(false);
-  useEffect(() => {
-    if (channeldata && mode === "edit") {
-      setFormData({
-        name: channeldata.name || "",
-        description: channeldata.description || "",
-      });
-    } else {
-      setFormData({
-        name: user?.name || "",
-        description: "",
-      });
-    }
-  }, [channeldata]);
   const handleChange = (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
@@ -55,17 +58,25 @@ const Channeldialogue = ({ isopen, onclose, channeldata, mode }: any) => {
       channelname: formData.name,
       description: formData.description,
     };
-    const response = await axiosInstance.patch(
-      `/user/update/${user._id}`,
-      payload
-    );
-    login(response?.data);
-    router.push(`/channel/${user?._id}`);
-    setFormData({
-      name: "",
-      description: "",
-    });
-    onclose();
+    setisSubmitting(true);
+    try {
+      const response = await axiosInstance.patch(
+        `/user/update/${user._id}`,
+        payload
+      );
+      login(response.data);
+      router.push(`/channel/${user._id}`);
+      setFormData({
+        name: "",
+        description: "",
+      });
+      onclose();
+    } catch (error) {
+      console.error("Unable to save channel details:", error);
+      toast.error("Unable to save your channel. Please try again.");
+    } finally {
+      setisSubmitting(false);
+    }
   };
   return (
     <Dialog open={isopen} onOpenChange={onclose}>
