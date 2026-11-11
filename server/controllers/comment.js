@@ -564,8 +564,9 @@ export const translateComment = async (req, res) => {
 
     if (!fallbackResponse.ok) {
       console.error("Google Translate fallback HTTP status:", fallbackResponse.status);
-      return res.status(502).json({
-        message: "Translation service is temporarily unavailable",
+      return res.status(503).json({
+        message:
+          "Translation is temporarily unavailable. Please try again in a few minutes.",
       });
     }
 
@@ -583,8 +584,9 @@ export const translateComment = async (req, res) => {
 
     if (!translatedText) {
       console.error("Google Translate fallback returned no translation");
-      return res.status(502).json({
-        message: "Unable to translate this text",
+      return res.status(503).json({
+        message:
+          "Translation is temporarily unavailable. Please try again in a few minutes.",
       });
     }
 
@@ -597,8 +599,9 @@ export const translateComment = async (req, res) => {
   } catch (error) {
     console.error("Translation fallback error:", error);
 
-    return res.status(502).json({
-      message: "Translation service timed out or could not be reached",
+    return res.status(503).json({
+      message:
+        "Translation is temporarily unavailable. Please try again in a few minutes.",
     });
   }
 };

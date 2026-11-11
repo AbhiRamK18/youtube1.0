@@ -586,15 +586,25 @@ const Comments = ({ videoId }: { videoId: string }) => {
       console.error("Translation error:", error);
 
       const response = (
-        error as { response?: { status?: number } }
+        error as {
+          response?: {
+            status?: number;
+            data?: { message?: string };
+          };
+        }
       ).response;
       const status = response?.status;
 
-      let message = "Translation failed. Please try again later.";
+      let message =
+        response?.data?.message ||
+        "Translation failed. Please try again later.";
 
-      if (status === 429) {
+      if (!response?.data?.message && status === 429) {
         message = "Translation limit reached. Please wait before trying again.";
-      } else if (status === 502 || !response) {
+      } else if (
+        !response?.data?.message &&
+        (status === 502 || status === 503 || !response)
+      ) {
         message = "Translation service is unavailable. Please try again later.";
       }
 
@@ -1004,7 +1014,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                           onChange={(e) =>
                             setReportReason(e.target.value as ReportReason)
                           }
-                          className="w-full rounded-md border px-3 py-2 text-sm"
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground [color-scheme:light] hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:[color-scheme:dark] [&_option]:bg-popover [&_option]:text-popover-foreground [&_option:hover]:bg-accent [&_option:checked]:bg-accent [&_option:checked]:text-accent-foreground"
                         >
                           <option value="spam">
                             Spam or misleading content
