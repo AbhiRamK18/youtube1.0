@@ -478,6 +478,17 @@ export const deleteReply = async (req, res) => {
   }
 };
 
+const fetchTranslation = async (url) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 export const translateComment = async (req, res) => {
   const { text, sourceLang = "en", targetLang } = req.body;
 
@@ -511,51 +522,67 @@ export const translateComment = async (req, res) => {
       langpair: `${sourceLang}|${targetLang}`,
     });
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    let response;
-
     try {
-      response = await fetch(
+      const response = await fetchTranslation(
         `https://api.mymemory.translated.net/get?${params.toString()}`,
-        {
-          signal: controller.signal,
-        }
       );
-    } finally {
-      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json();
+
+        if (
+          data.responseStatus === 200 &&
+          typeof data.responseData?.translatedText === "string" &&
+          data.responseData.translatedText.trim()
+        ) {
+          return res.status(200).json({
+            originalText: text,
+            translatedText: data.responseData.translatedText,
+            sourceLang,
+            targetLang,
+          });
+        }
+
+        console.error("MyMemory response:", data.responseDetails);
+      } else {
+        console.error("MyMemory HTTP status:", response.status);
+      }
+    } catch (primaryError) {
+      console.error("MyMemory translation error:", primaryError);
     }
 
-    if (!response.ok) {
-      console.error("MyMemory HTTP status:", response.status);
+    const fallbackParams = new URLSearchParams({
+      client: "gtx",
+      sl: sourceLang,
+      tl: targetLang,
+      dt: "t",
+      q: text.trim(),
+    });
+    const fallbackResponse = await fetchTranslation(
+      `https://translate.googleapis.com/translate_a/single?${fallbackParams.toString()}`,
+    );
 
-      if (response.status === 429) {
-        return res.status(429).json({
-          message: "Translation quota reached. Please try later.",
-        });
-      }
-
+    if (!fallbackResponse.ok) {
+      console.error("Google Translate fallback HTTP status:", fallbackResponse.status);
       return res.status(502).json({
         message: "Translation service is temporarily unavailable",
       });
     }
 
-    const data = await response.json();
+    const fallbackData = await fallbackResponse.json();
+    const translatedText = Array.isArray(fallbackData?.[0])
+      ? fallbackData[0]
+          .map((segment) =>
+            Array.isArray(segment) && typeof segment[0] === "string"
+              ? segment[0]
+              : "",
+          )
+          .join("")
+          .trim()
+      : "";
 
-    if (data.responseStatus === 429) {
-      return res.status(429).json({
-        message: "Translation quota reached. Please try later.",
-      });
-    }
-
-    if (
-      data.responseStatus !== 200 ||
-      typeof data.responseData?.translatedText !== "string" ||
-      !data.responseData.translatedText.trim()
-    ) {
-      console.error("MyMemory response:", data.responseDetails);
-
+    if (!translatedText) {
+      console.error("Google Translate fallback returned no translation");
       return res.status(502).json({
         message: "Unable to translate this text",
       });
@@ -563,12 +590,12 @@ export const translateComment = async (req, res) => {
 
     return res.status(200).json({
       originalText: text,
-      translatedText: data.responseData.translatedText,
+      translatedText,
       sourceLang,
       targetLang,
     });
   } catch (error) {
-    console.error("Translation service error:", error);
+    console.error("Translation fallback error:", error);
 
     return res.status(502).json({
       message: "Translation service timed out or could not be reached",

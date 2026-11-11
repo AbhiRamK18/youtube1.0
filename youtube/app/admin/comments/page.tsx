@@ -164,7 +164,7 @@ export default function CommentModerationPage() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading reports...</p>
       ) : reports.length === 0 ? (
-        <p className="rounded-lg border p-4 text-sm text-muted-foreground">
+        <p className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
           No reports found for this status.
         </p>
       ) : (
@@ -174,7 +174,10 @@ export default function CommentModerationPage() {
             const canResolve =
               report.status === "pending" || report.status === "reviewed";
             return (
-              <article key={report._id} className="space-y-3 rounded-lg border p-4">
+              <article
+                key={report._id}
+                className="space-y-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+              >
                 <div className="flex flex-wrap justify-between gap-2 text-sm">
                   <span className="font-medium">
                     {report.reason.replace(/_/g, " ")}
@@ -185,7 +188,7 @@ export default function CommentModerationPage() {
                   </span>
                 </div>
 
-                <div className="space-y-1 rounded-md bg-muted p-3">
+                <div className="space-y-1 rounded-md bg-muted p-3 text-foreground">
                   <p className="text-xs text-muted-foreground">
                     {comment
                       ? `Comment by ${comment.usercommented || "Unknown user"}`
