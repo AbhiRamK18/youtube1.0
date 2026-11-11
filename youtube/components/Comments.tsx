@@ -54,7 +54,8 @@ const languages: { code: LanguageCode; name: string }[] = [
   { code: "ml", name: "Malayalam" },
 ];
 
-const isLanguageCode = (value: string | null): value is LanguageCode =>
+const isLanguageCode = (value: unknown): value is LanguageCode =>
+  typeof value === "string" &&
   languages.some((language) => language.code === value);
 
 const getDisplayUsername = (username?: string, channelName?: string) =>
@@ -180,9 +181,8 @@ const Comments = ({ videoId }: { videoId: string }) => {
     Record<string, { type: "success" | "error"; message: string }>
   >({});
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(() => {
-    if (isLanguageCode(user?.preferredCommentLanguage ?? null)) {
-      return user.preferredCommentLanguage;
-    }
+    const preferredLanguage = user?.preferredCommentLanguage;
+    if (isLanguageCode(preferredLanguage)) return preferredLanguage;
     if (typeof window !== "undefined") {
       const savedLanguage = window.localStorage.getItem(
         "preferred-comment-language",
