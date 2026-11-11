@@ -56,6 +56,7 @@ export const updateThemePreference = async (req, res) => {
 
   try {
     req.authenticatedUser.themePreference = theme;
+    req.authenticatedUser.themePreferenceSource = "manual";
     await req.authenticatedUser.save();
     return res.status(200).json({
       themePreference: req.authenticatedUser.themePreference,
@@ -63,5 +64,23 @@ export const updateThemePreference = async (req, res) => {
   } catch (error) {
     console.error("Theme preference update failed:", error);
     return res.status(500).json({ message: "Unable to save theme preference" });
+  }
+};
+
+export const updatePreferredCommentLanguage = async (req, res) => {
+  const { language } = req.body || {};
+  if (!["en", "te", "hi", "ta", "kn", "ml"].includes(language)) {
+    return res.status(400).json({ message: "Choose a supported comment language" });
+  }
+
+  try {
+    req.authenticatedUser.preferredCommentLanguage = language;
+    await req.authenticatedUser.save();
+    return res.status(200).json({
+      preferredCommentLanguage: req.authenticatedUser.preferredCommentLanguage,
+    });
+  } catch (error) {
+    console.error("Preferred comment language update failed:", error);
+    return res.status(500).json({ message: "Unable to save comment language preference" });
   }
 };

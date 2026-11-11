@@ -21,6 +21,15 @@ const userschema = mongoose.Schema({
     type: String,
     enum: ["light", "dark"],
   },
+  themePreferenceSource: {
+    type: String,
+    enum: ["automatic", "manual"],
+  },
+  preferredCommentLanguage: {
+    type: String,
+    enum: ["en", "te", "hi", "ta", "kn", "ml"],
+    default: "en",
+  },
 
   joinedon: { type: Date, default: Date.now },
 });

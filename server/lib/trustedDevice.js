@@ -102,9 +102,9 @@ export const findMatchingTrustedDevice = async (req, userId, currentLocation) =>
     trustedUntil: { $gt: new Date() },
     revokedAt: null,
   });
-  // IP addresses can change independently of the trusted browser and device.
   if (
     !trusted ||
+    trusted.ipAddress !== device.ipAddress ||
     trusted.browser !== device.browser ||
     trusted.operatingSystem !== device.operatingSystem ||
     trusted.deviceType !== device.deviceType ||

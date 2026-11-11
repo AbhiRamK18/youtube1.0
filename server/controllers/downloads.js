@@ -146,18 +146,78 @@ const refundQuota = async (userId, dayKey, monthKey) => {
 
 const issueDownloadTicket = async (record, reservedQuota) => {
   const ticket = randomBytes(32).toString("hex");
-  record.ticketHash = sha256(ticket);
-  record.ticketExpiresAt = new Date(Date.now() + ticketLifetimeMs);
-  record.status = "authorized";
-  record.activeAttemptId = new mongoose.Types.ObjectId();
-  record.attempts.push({
-    _id: record.activeAttemptId,
-    startedAt: new Date(),
-    status: "authorized",
-    reservedQuota,
-  });
-  await record.save();
+  const now = new Date();
+  const attemptId = new mongoose.Types.ObjectId();
+  const updated = await VideoDownload.findOneAndUpdate(
+    {
+      _id: record._id,
+      $or: [
+        { status: { $in: ["failed", "completed"] } },
+        { status: "authorized", ticketExpiresAt: null },
+        { status: "authorized", ticketExpiresAt: { $lte: now } },
+      ],
+    },
+    {
+      $set: {
+        ticketHash: sha256(ticket),
+        ticketExpiresAt: new Date(now.getTime() + ticketLifetimeMs),
+        status: "authorized",
+        activeAttemptId: attemptId,
+      },
+      $push: {
+        attempts: {
+          _id: attemptId,
+          startedAt: now,
+          status: "authorized",
+          reservedQuota,
+        },
+      },
+    },
+    { new: true },
+  );
+  if (!updated) return null;
   return ticket;
+};
+
+const refundFailedAttemptQuota = async (downloadId, attemptId) => {
+  const record = await VideoDownload.findOneAndUpdate(
+    {
+      _id: downloadId,
+      attempts: {
+        $elemMatch: { _id: attemptId, reservedQuota: true, status: "failed" },
+      },
+    },
+    { $set: { "attempts.$.reservedQuota": false } },
+    { new: true },
+  ).select("userId quotaDayKey quotaMonthKey");
+
+  if (!record || !record.quotaDayKey || !record.quotaMonthKey) return;
+  await refundQuota(record.userId, record.quotaDayKey, record.quotaMonthKey);
+};
+
+const failDownloadAttempt = async (downloadId, attemptId, failureReason) => {
+  const result = await VideoDownload.updateOne(
+    {
+      _id: downloadId,
+      activeAttemptId: attemptId,
+      attempts: {
+        $elemMatch: { _id: attemptId, status: "in_progress" },
+      },
+    },
+    {
+      $set: {
+        status: "failed",
+        activeAttemptId: null,
+        "attempts.$[attempt].status": "failed",
+        "attempts.$[attempt].finishedAt": new Date(),
+        "attempts.$[attempt].failureReason": failureReason,
+      },
+    },
+    { arrayFilters: [{ "attempt._id": attemptId }] },
+  );
+  if (result.modifiedCount) {
+    await refundFailedAttemptQuota(downloadId, attemptId);
+  }
 };
 
 export const authorizeVideoDownload = async (req, res) => {
@@ -185,7 +245,23 @@ export const authorizeVideoDownload = async (req, res) => {
 
     const { dayKey, monthKey } = getIndiaQuotaKeys();
     const duplicateKey = `${userId}:${videoId}:${dayKey}`;
-    let record = await VideoDownload.findOne({ duplicateKey });
+    let record = await VideoDownload.findOne({ duplicateKey }).select(
+      "+ticketExpiresAt",
+    );
+    if (record?.status === "in_progress") {
+      return res.status(409).json({
+        message: "This video is already being downloaded. Try again when it finishes.",
+      });
+    }
+    if (
+      record?.status === "authorized" &&
+      record.ticketExpiresAt &&
+      record.ticketExpiresAt > new Date()
+    ) {
+      return res.status(409).json({
+        message: "A download ticket is already active. Use it or wait for it to expire.",
+      });
+    }
     let reservedQuota = false;
     if (!record) {
       const quota = await reserveQuota(userId, dayKey, monthKey, plan);
@@ -206,6 +282,8 @@ export const authorizeVideoDownload = async (req, res) => {
           ...getRequestDevice(req),
           subscriptionPlan: plan.id,
           fileSize: statSync(filePath).size,
+          quotaDayKey: dayKey,
+          quotaMonthKey: monthKey,
           status: "authorized",
         });
       } catch (error) {
@@ -217,6 +295,11 @@ export const authorizeVideoDownload = async (req, res) => {
     }
 
     const ticket = await issueDownloadTicket(record, reservedQuota);
+    if (!ticket) {
+      return res.status(409).json({
+        message: "Another download request is already being prepared. Retry shortly.",
+      });
+    }
     return res.status(200).json({
       downloadUrl: `/video/download/${record._id}?ticket=${ticket}`,
       title: video.videotitle,
@@ -246,34 +329,83 @@ export const streamAuthorizedDownload = async (req, res) => {
   }
 
   try {
-    const record = await VideoDownload.findOne({
+    const ticketHash = sha256(ticket);
+    const authorizedRecord = await VideoDownload.findOne({
       _id: downloadId,
-      ticketHash: sha256(ticket),
+      ticketHash,
       ticketExpiresAt: { $gt: new Date() },
-    }).populate("videoId");
-    if (!record?.videoId) return res.status(403).json({ message: "Download ticket expired" });
+      status: "authorized",
+    })
+      .select("activeAttemptId userId videoId")
+      .populate("videoId");
+    if (!authorizedRecord?.activeAttemptId) {
+      return res.status(403).json({ message: "Download ticket expired or already used" });
+    }
+    if (!authorizedRecord.videoId) {
+      return res.status(404).json({ message: "Video not found" });
+    }
+    const activePlan = await getActivePlan(authorizedRecord.userId);
+    const ranks = { bronze: 1, silver: 2, gold: 3 };
+    if (
+      authorizedRecord.videoId.premiumOnly &&
+      (ranks[activePlan.id] || 0) <
+        ranks[authorizedRecord.videoId.minimumPlan]
+    ) {
+      return res.status(403).json({
+        message: "Your subscription no longer allows this video download.",
+      });
+    }
+
+    const attemptId = authorizedRecord.activeAttemptId;
+    const record = await VideoDownload.findOneAndUpdate(
+      {
+        _id: downloadId,
+        ticketHash,
+        ticketExpiresAt: { $gt: new Date() },
+        status: "authorized",
+        activeAttemptId: attemptId,
+      },
+      {
+        $set: {
+          status: "in_progress",
+          ticketHash: "",
+          ticketExpiresAt: null,
+          "attempts.$[attempt].status": "in_progress",
+          "attempts.$[attempt].startedAt": new Date(),
+        },
+      },
+      {
+        new: true,
+        arrayFilters: [{ "attempt._id": attemptId }],
+      },
+    )
+      .populate("videoId");
+    if (!record?.videoId) {
+      return res.status(403).json({ message: "Download ticket expired or already used" });
+    }
     const filePath = getLocalVideoPath(record.videoId);
     if (!filePath || !existsSync(filePath)) {
+      await failDownloadAttempt(record._id, attemptId, "Video file unavailable");
       return res.status(404).json({ message: "Video file is unavailable" });
     }
 
-    const attempt = record.attempts[record.attempts.length - 1];
-    if (attempt) {
-      attempt.status = "in_progress";
-      attempt.startedAt = new Date();
+    const attempt = record.attempts.find(
+      (item) => item._id.toString() === attemptId.toString(),
+    );
+    if (!attempt) {
+      return res.status(409).json({ message: "Download attempt is no longer available" });
     }
-    record.status = "in_progress";
-    await record.save();
 
     let finished = false;
     res.on("finish", () => {
       finished = true;
       void VideoDownload.updateOne(
-        { _id: record._id },
+        { _id: record._id, activeAttemptId: attemptId },
         {
           $set: {
             status: "completed",
             downloadedAt: new Date(),
+            activeAttemptId: null,
             "attempts.$[attempt].status": "completed",
             "attempts.$[attempt].finishedAt": new Date(),
           },
@@ -283,18 +415,13 @@ export const streamAuthorizedDownload = async (req, res) => {
     });
     res.on("close", () => {
       if (!finished) {
-        void VideoDownload.updateOne(
-          { _id: record._id },
-          {
-            $set: {
-              status: "failed",
-              "attempts.$[attempt].status": "failed",
-              "attempts.$[attempt].finishedAt": new Date(),
-              "attempts.$[attempt].failureReason": "Connection interrupted",
-            },
-          },
-          { arrayFilters: [{ "attempt._id": attempt?._id }] },
-        ).catch((error) => console.error("Could not record interrupted download:", error));
+        void failDownloadAttempt(
+          record._id,
+          attemptId,
+          "Connection interrupted",
+        ).catch((error) =>
+          console.error("Could not record interrupted download:", error),
+        );
       }
     });
     return res.download(

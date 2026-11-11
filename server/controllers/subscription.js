@@ -61,6 +61,18 @@ const createInvoiceNumber = () =>
     .slice(0, 10)
     .toUpperCase()}`;
 
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (character) => {
+    const entities = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
+
 const sendReceiptEmail = async (user, subscription) => {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
@@ -73,6 +85,29 @@ const sendReceiptEmail = async (user, subscription) => {
     auth: { user: SMTP_USER, pass: SMTP_PASS },
   });
   const plan = SUBSCRIPTION_PLANS[subscription.plan];
+  const startsLater = subscription.startsAt > new Date();
+  const supportEmail = process.env.SUPPORT_EMAIL || SMTP_USER;
+  const invoiceHtml = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>Subscription invoice ${escapeHtml(subscription.invoiceNumber)}</title></head>
+  <body style="font-family:Arial,sans-serif;color:#222;max-width:640px;margin:32px auto">
+    <h1>YourTube subscription invoice</h1>
+    <p>Invoice: <strong>${escapeHtml(subscription.invoiceNumber)}</strong></p>
+    <p>Customer: ${escapeHtml(user.name || user.email)}</p>
+    <table style="border-collapse:collapse;width:100%">
+      <tbody>
+        <tr><th align="left">Plan</th><td>${escapeHtml(plan.name)} (${escapeHtml(subscription.period)})</td></tr>
+        <tr><th align="left">Amount paid</th><td>${escapeHtml(subscription.currency)} ${(subscription.amountPaise / 100).toFixed(2)}</td></tr>
+        <tr><th align="left">Payment ID</th><td>${escapeHtml(subscription.paymentId)}</td></tr>
+        <tr><th align="left">Order ID</th><td>${escapeHtml(subscription.orderId)}</td></tr>
+        <tr><th align="left">Status</th><td>${startsLater ? "Paid; scheduled" : "Paid; active"}</td></tr>
+        <tr><th align="left">Valid from</th><td>${escapeHtml(subscription.startsAt.toISOString())}</td></tr>
+        <tr><th align="left">Valid until</th><td>${escapeHtml(subscription.expiresAt.toISOString())}</td></tr>
+      </tbody>
+    </table>
+    <p>Support: ${escapeHtml(supportEmail)}</p>
+  </body>
+</html>`;
   await transporter.sendMail({
     from: process.env.SMTP_FROM || SMTP_USER,
     to: user.email,
@@ -80,16 +115,41 @@ const sendReceiptEmail = async (user, subscription) => {
     text: [
       `Hello ${user.name || "there"},`,
       "",
-      `Your ${plan.name} subscription is active.`,
+      startsLater
+        ? `Your ${plan.name} subscription is scheduled to start on ${subscription.startsAt.toISOString()}.`
+        : `Your ${plan.name} subscription is active.`,
       `Validity: ${subscription.startsAt.toISOString()} to ${subscription.expiresAt.toISOString()}`,
       `Amount: INR ${(subscription.amountPaise / 100).toFixed(2)}`,
       `Payment ID: ${subscription.paymentId}`,
       `Order ID: ${subscription.orderId}`,
       `Invoice: ${subscription.invoiceNumber}`,
       "",
-      `Support: ${process.env.SUPPORT_EMAIL || SMTP_USER}`,
+      "Your invoice is attached to this email.",
+      "",
+      `Support: ${supportEmail}`,
     ].join("\n"),
+    attachments: [
+      {
+        filename: `${subscription.invoiceNumber}.html`,
+        contentType: "text/html; charset=utf-8",
+        content: invoiceHtml,
+      },
+    ],
   });
+};
+
+const notifyScheduleUpdate = async (subscription) => {
+  const { default: users } = await import("../Modals/Auth.js");
+  const user = await users.findById(subscription.userId);
+  if (!user?.email) {
+    console.error("Subscription schedule update could not be sent: user email is unavailable");
+    return;
+  }
+  try {
+    await sendReceiptEmail(user, subscription);
+  } catch (error) {
+    console.error("Subscription schedule update email failed:", error);
+  }
 };
 
 const activatePayment = async (paymentRecord, payment, signature = "") => {
@@ -120,17 +180,37 @@ const activatePayment = async (paymentRecord, payment, signature = "") => {
   }
 
   let subscription = await Subscription.findOne({ orderId: paymentRecord.orderId });
+  const scheduleUpdates = [];
   if (!subscription) {
     const invoiceNumber = createInvoiceNumber();
     const now = new Date();
+    const activeSubscription = await Subscription.findOne({
+      userId: paymentRecord.userId,
+      status: { $in: ["active", "cancelled"] },
+      startsAt: { $lte: now },
+      expiresAt: { $gt: now },
+    }).sort({ expiresAt: -1 });
+    const scheduledSubscriptions = await Subscription.find({
+      userId: paymentRecord.userId,
+      status: "scheduled",
+      expiresAt: { $gt: now },
+    }).sort({ expiresAt: 1 });
+    const latestScheduled =
+      scheduledSubscriptions[scheduledSubscriptions.length - 1];
+    let startsAt = now;
+    const previousPeriodEnd =
+      latestScheduled?.expiresAt || activeSubscription?.expiresAt;
+    if (previousPeriodEnd && previousPeriodEnd > now) {
+      startsAt = previousPeriodEnd;
+    }
     try {
       subscription = await Subscription.create({
         userId: paymentRecord.userId,
         plan: paymentRecord.plan,
         period: paymentRecord.period,
-        status: "active",
-        startsAt: now,
-        expiresAt: calculatePeriodEnd(now, paymentRecord.period),
+        status: startsAt > now ? "scheduled" : "active",
+        startsAt,
+        expiresAt: calculatePeriodEnd(startsAt, paymentRecord.period),
         autoRenew: false,
         orderId: paymentRecord.orderId,
         paymentId: payment.id,
@@ -144,6 +224,35 @@ const activatePayment = async (paymentRecord, payment, signature = "") => {
         orderId: paymentRecord.orderId,
       });
       if (!subscription) throw error;
+    }
+  }
+
+  const overlappingSchedules = await Subscription.find({
+    _id: { $ne: subscription._id },
+    userId: paymentRecord.userId,
+    status: "scheduled",
+    startsAt: { $lt: subscription.expiresAt },
+    expiresAt: { $gt: subscription.startsAt },
+  }).sort({ startsAt: 1, createdAt: 1 });
+  let nextScheduledStart = subscription.expiresAt;
+  for (const scheduled of overlappingSchedules) {
+    if (scheduled.startsAt >= nextScheduledStart) {
+      nextScheduledStart = scheduled.expiresAt;
+      continue;
+    }
+    const updatedSchedule = await Subscription.findOneAndUpdate(
+      { _id: scheduled._id, status: "scheduled" },
+      {
+        $set: {
+          startsAt: nextScheduledStart,
+          expiresAt: calculatePeriodEnd(nextScheduledStart, scheduled.period),
+        },
+      },
+      { new: true },
+    );
+    if (updatedSchedule) {
+      scheduleUpdates.push(updatedSchedule);
+      nextScheduledStart = updatedSchedule.expiresAt;
     }
   }
 
@@ -167,6 +276,9 @@ const activatePayment = async (paymentRecord, payment, signature = "") => {
     if (currentPayment?.status !== "captured") {
       throw new Error("Payment state changed before activation");
     }
+  }
+  for (const scheduled of scheduleUpdates) {
+    await notifyScheduleUpdate(scheduled);
   }
 
   return {
@@ -435,21 +547,65 @@ export const cancelSubscriptionOrder = async (req, res) => {
 
 export const cancelSubscriptionRenewal = async (req, res) => {
   try {
+    const now = new Date();
     const subscription = await Subscription.findOneAndUpdate(
       {
         _id: req.params.subscriptionId,
         userId: req.authenticatedUser._id,
-        status: "active",
-        expiresAt: { $gt: new Date() },
+        status: { $in: ["active", "scheduled"] },
+        expiresAt: { $gt: now },
       },
-      { $set: { autoRenew: false } },
+      {
+        $set: {
+          status: "cancelled",
+          autoRenew: false,
+        },
+      },
       { new: true },
     );
     if (!subscription) {
-      return res.status(404).json({ message: "Active subscription not found" });
+      return res.status(404).json({ message: "Current or scheduled subscription not found" });
+    }
+    if (subscription.startsAt > now) {
+      const followingSubscriptions = await Subscription.find({
+        userId: req.authenticatedUser._id,
+        status: "scheduled",
+        startsAt: { $gte: subscription.startsAt },
+        expiresAt: { $gt: now },
+      }).sort({ startsAt: 1, createdAt: 1 });
+      const updatedSchedules = [];
+      let nextStart = subscription.startsAt;
+
+      for (const scheduled of followingSubscriptions) {
+        if (scheduled.startsAt.getTime() !== nextStart.getTime()) {
+          const updatedSchedule = await Subscription.findOneAndUpdate(
+            { _id: scheduled._id, status: "scheduled" },
+            {
+              $set: {
+                startsAt: nextStart,
+                expiresAt: calculatePeriodEnd(nextStart, scheduled.period),
+              },
+            },
+            { new: true },
+          );
+          if (updatedSchedule) updatedSchedules.push(updatedSchedule);
+          if (updatedSchedule) {
+            nextStart = updatedSchedule.expiresAt;
+            continue;
+          }
+        }
+        nextStart = scheduled.expiresAt;
+      }
+
+      for (const scheduled of updatedSchedules) {
+        await notifyScheduleUpdate(scheduled);
+      }
     }
     return res.status(200).json({
-      message: "Renewal cancelled. Access remains available until expiry.",
+      message:
+        subscription.startsAt > now
+          ? "Scheduled subscription cancelled."
+          : "Subscription cancellation scheduled. Access remains available until expiry.",
       subscription,
     });
   } catch (error) {

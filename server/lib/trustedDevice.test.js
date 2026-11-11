@@ -49,7 +49,7 @@ test("HTTPS deployments issue trusted-device cookies for cross-site API requests
   }
 });
 
-test("trusted devices remain valid when the user's IP address changes", async () => {
+test("a new IP address or browser requires login verification", async () => {
   const previousSecret = process.env.AUTH_SECURITY_SECRET;
   const previousFindOne = TrustedDevice.findOne;
   process.env.AUTH_SECURITY_SECRET = "test-secret-with-at-least-32-characters";
@@ -60,7 +60,7 @@ test("trusted devices remain valid when the user's IP address changes", async ()
     operatingSystem: "Windows",
     deviceType: "Desktop",
     deviceModel: "Unknown",
-    ipAddress: "198.51.100.10",
+    ipAddress: "203.0.113.20",
     city: "Unavailable",
     state: "Unavailable",
   };
@@ -83,6 +83,10 @@ test("trusted devices remain valid when the user's IP address changes", async ()
       trustedDevice,
     );
 
+    req.ip = "198.51.100.10";
+    assert.equal(await findMatchingTrustedDevice(req, "user-id"), null);
+
+    req.ip = "203.0.113.20";
     req.get = (name) =>
       name.toLowerCase() === "user-agent"
         ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Firefox/120.0"

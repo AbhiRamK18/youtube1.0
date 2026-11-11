@@ -97,14 +97,24 @@ export const getActivePlan = async (userId) => {
   await Subscription.updateMany(
     {
       userId,
-      status: { $in: ["active", "cancelled"] },
+      status: { $in: ["active", "scheduled", "cancelled"] },
       expiresAt: { $lte: now },
     },
     { $set: { status: "expired" } },
   );
+  await Subscription.updateMany(
+    {
+      userId,
+      status: "scheduled",
+      startsAt: { $lte: now },
+      expiresAt: { $gt: now },
+    },
+    { $set: { status: "active" } },
+  );
   const activeSubscription = await Subscription.findOne({
     userId,
     status: { $in: ["active", "cancelled"] },
+    startsAt: { $lte: now },
     expiresAt: { $gt: now },
   }).sort({ expiresAt: -1 });
   const plan = SUBSCRIPTION_PLANS[activeSubscription?.plan || "free"];

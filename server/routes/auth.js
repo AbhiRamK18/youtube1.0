@@ -1,5 +1,9 @@
 import express from "express";
-import { updateprofile, updateThemePreference } from "../controllers/auth.js";
+import {
+  updateprofile,
+  updatePreferredCommentLanguage,
+  updateThemePreference,
+} from "../controllers/auth.js";
 import {
   beginLogin,
   getLoginHistory,
@@ -18,6 +22,11 @@ routes.post("/login", secureLoginRateLimit, beginLogin);
 routes.post("/verify-login", otpVerificationRateLimit, verifyLogin);
 routes.patch("/update/:id", updateprofile);
 routes.patch("/preferences/theme", requireFirebaseUser, updateThemePreference);
+routes.patch(
+  "/preferences/comment-language",
+  requireFirebaseUser,
+  updatePreferredCommentLanguage,
+);
 routes.get("/security/logins", requireFirebaseUser, getLoginHistory);
 routes.get("/security/devices", requireFirebaseUser, getTrustedDevices);
 routes.delete(

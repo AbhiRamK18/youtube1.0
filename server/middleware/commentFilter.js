@@ -17,15 +17,65 @@ const suspiciousShortenerPattern =
   /(?:https?:\/\/)?(?:www\.)?(?:bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|cutt\.ly)\//iu;
 const unsafeIpPattern =
   /^(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/u;
+const abusiveWordsByLanguage = {
+  en: [
+    "fuck",
+    "bitch",
+    "bastard",
+  ],
+  hi: [
+    "behenchod",
+    "bhosdi",
+    "chutiya",
+    "harami",
+    "madarchod",
+    "बहनचोद",
+    "भोसड़ी",
+    "चूतिया",
+    "हरामी",
+    "मादरचोद",
+  ],
+  te: [
+    "denge",
+    "dengu",
+    "lanja",
+    "లంజ",
+    "దెంగు",
+  ],
+  ta: [
+    "thevidiya",
+    "otha",
+    "pundai",
+    "தேவடியா",
+    "புண்டை",
+  ],
+  kn: [
+    "bolimaga",
+    "soole",
+    "ಸೂಳೆ",
+    "ಬೋಳಿಮಗ",
+  ],
+  ml: [
+    "myre",
+    "poori",
+    "thayoli",
+    "പൂറി",
+    "തായോളി",
+  ],
+};
+
 const configuredAbusiveWords = () => [
-  "fuck",
-  "bitch",
-  "bastard",
-  ...(process.env.COMMENT_ABUSIVE_WORDS || "")
-    .split(",")
-    .map((word) => word.trim().normalize("NFKC").toLowerCase())
-    .filter(Boolean),
-];
+  ...Object.entries(abusiveWordsByLanguage).flatMap(([language, words]) => [
+    ...words,
+    ...(process.env[`COMMENT_ABUSIVE_WORDS_${language.toUpperCase()}`] || "")
+      .split(",")
+      .map((word) => word.trim())
+      .filter(Boolean),
+  ]),
+  ...(process.env.COMMENT_ABUSIVE_WORDS || "").split(","),
+]
+  .map((word) => word.trim().normalize("NFKC").toLowerCase())
+  .filter(Boolean);
 
 const configuredBlockedDomains = () =>
   (process.env.COMMENT_BLOCKED_DOMAINS || "")
@@ -134,7 +184,6 @@ export const filterCommentText = (text) => {
     };
   }
 
-  // Check for configured abusive words.
   const normalizedText = trimmedText
     .normalize("NFKC")
     .toLowerCase()

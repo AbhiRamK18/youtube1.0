@@ -38,7 +38,12 @@ interface Reply {
   location?: string;
   userimage?: string;
 }
+interface MentionCandidate {
+  handle: string;
+  name: string;
+}
 type LanguageCode = "en" | "te" | "hi" | "ta" | "kn" | "ml";
+type SourceLanguageCode = LanguageCode | "auto";
 
 const languages: { code: LanguageCode; name: string }[] = [
   { code: "en", name: "English" },
@@ -49,22 +54,24 @@ const languages: { code: LanguageCode; name: string }[] = [
   { code: "ml", name: "Malayalam" },
 ];
 
+const isLanguageCode = (value: string | null): value is LanguageCode =>
+  languages.some((language) => language.code === value);
+
 const getDisplayUsername = (username?: string, channelName?: string) =>
   (username?.trim() || channelName?.toLowerCase().replace(/\s+/g, "") || "")
     .replace(/^@/, "");
 
-const renderMentions = (text: string, userIds: string[]) => {
-  const knownUserIds = [...new Set(userIds.filter(Boolean))]
+const renderMentions = (text: string, usernames: string[]) => {
+  const knownUserIds = [...new Set(usernames.filter(Boolean))]
     .sort((a, b) => b.length - a.length)
     .map((userId) => userId.replace(/^@/, ""));
   const knownIdPattern = knownUserIds
     .map((userId) => userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
+  if (!knownIdPattern) return [text];
   const mentionPattern = new RegExp(
-    knownIdPattern
-      ? `@(?:${knownIdPattern})(?![\\p{L}\\p{N}_])|@[\\p{L}\\p{N}_-]+`
-      : `@[\\p{L}\\p{N}_-]+`,
-    "giu"
+    `@(?:${knownIdPattern})(?![\\p{L}\\p{N}_])`,
+    "giu",
   );
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -113,23 +120,40 @@ const Comments = ({ videoId }: { videoId: string }) => {
     >
   >({});
   const [replies, setReplies] = useState<Record<string, Reply[]>>({});
-  const mentionUserIds = useMemo(
-    () =>
-      [
-        user?.channelname,
-        ...comments.flatMap((comment) => [
-          comment.usercommented,
-          comment.username,
-        ]),
-        ...Object.values(replies).flatMap((commentReplies) =>
-          commentReplies.flatMap((reply) => [
-            reply.userreplied,
-            reply.username,
-          ])
-        ),
-      ].filter((userId): userId is string => Boolean(userId)),
-    [comments, replies, user?.channelname]
+  const mentionCandidates = useMemo(() => {
+    const candidates = new Map<string, MentionCandidate>();
+    const addCandidate = (username?: string, displayName?: string) => {
+      const handle = getDisplayUsername(username, displayName).replace(
+        /[^\p{L}\p{N}_-]/gu,
+        "",
+      );
+      if (handle) {
+        candidates.set(handle.toLowerCase(), {
+          handle,
+          name: displayName || username || handle,
+        });
+      }
+    };
+
+    comments.forEach((comment) =>
+      addCandidate(comment.username, comment.usercommented),
+    );
+    Object.values(replies).flat().forEach((reply) =>
+      addCandidate(reply.username, reply.userreplied),
+    );
+    return [...candidates.values()];
+  }, [comments, replies]);
+  const mentionUsernames = useMemo(
+    () => mentionCandidates.map((candidate) => candidate.handle),
+    [mentionCandidates],
   );
+  const [mentionEntry, setMentionEntry] = useState<{
+    editor: "comment" | "reply" | "edit";
+    commentId?: string;
+    start: number;
+    end: number;
+    query: string;
+  } | null>(null);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
   const [loadingReplies, setLoadingReplies] = useState<string | null>(null);
@@ -155,8 +179,20 @@ const Comments = ({ videoId }: { videoId: string }) => {
   const [reportMessages, setReportMessages] = useState<
     Record<string, { type: "success" | "error"; message: string }>
   >({});
-  const [targetLanguage, setTargetLanguage] = useState<LanguageCode>("en");
-  const [sourceLanguage, setSourceLanguage] = useState<LanguageCode>("en");
+  const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(() => {
+    if (isLanguageCode(user?.preferredCommentLanguage ?? null)) {
+      return user.preferredCommentLanguage;
+    }
+    if (typeof window !== "undefined") {
+      const savedLanguage = window.localStorage.getItem(
+        "preferred-comment-language",
+      );
+      if (isLanguageCode(savedLanguage)) return savedLanguage;
+    }
+    return "en";
+  });
+  const [sourceLanguage, setSourceLanguage] =
+    useState<SourceLanguageCode>("auto");
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [expandedHistoryId, setExpandedHistoryId] = useState<string | null>(
     null,
@@ -169,6 +205,144 @@ const Comments = ({ videoId }: { videoId: string }) => {
   const [translationErrors, setTranslationErrors] = useState<
     Record<string, string>
   >({});
+  const [preferenceError, setPreferenceError] = useState("");
+  const [savingLanguagePreference, setSavingLanguagePreference] =
+    useState(false);
+
+  useEffect(() => {
+    if (
+      user?.preferredCommentLanguage &&
+      languages.some(
+        (language) => language.code === user.preferredCommentLanguage,
+      )
+    ) {
+      setTargetLanguage(user.preferredCommentLanguage);
+    }
+  }, [user?.preferredCommentLanguage]);
+
+  const handleTargetLanguageChange = async (language: LanguageCode) => {
+    const previousLanguage = targetLanguage;
+    setTargetLanguage(language);
+    setPreferenceError("");
+    if (!user) {
+      try {
+        window.localStorage.setItem("preferred-comment-language", language);
+      } catch (error) {
+        console.error("Unable to save comment language locally:", error);
+        setTargetLanguage(previousLanguage);
+        setPreferenceError("Unable to save your translation language.");
+      }
+      return;
+    }
+
+    setSavingLanguagePreference(true);
+    try {
+      await axiosInstance.patch(
+        "/user/preferences/comment-language",
+        { language },
+        await getFirebaseAuthConfig(),
+      );
+    } catch (error) {
+      console.error("Unable to save preferred comment language:", error);
+      setTargetLanguage(previousLanguage);
+      setPreferenceError(
+        "Unable to save your translation language. Please try again.",
+      );
+    } finally {
+      setSavingLanguagePreference(false);
+    }
+  };
+
+  const updateMentionEntry = (
+    text: string,
+    cursor: number,
+    editor: "comment" | "reply" | "edit",
+    commentId?: string,
+  ) => {
+    const match = text.slice(0, cursor).match(/(^|\s)@([\p{L}\p{N}_-]*)$/u);
+    if (!match) {
+      setMentionEntry(null);
+      return;
+    }
+
+    const query = match[2];
+    setMentionEntry({
+      editor,
+      commentId,
+      start: cursor - query.length - 1,
+      end: cursor,
+      query,
+    });
+  };
+
+  const selectMention = (
+    editor: "comment" | "reply" | "edit",
+    commentId: string | undefined,
+    text: string,
+    setText: (value: string) => void,
+    candidate: MentionCandidate,
+  ) => {
+    if (
+      !mentionEntry ||
+      mentionEntry.editor !== editor ||
+      mentionEntry.commentId !== commentId
+    ) {
+      return;
+    }
+    setText(
+      `${text.slice(0, mentionEntry.start)}@${candidate.handle} ${text.slice(
+        mentionEntry.end,
+      )}`,
+    );
+    setMentionEntry(null);
+  };
+
+  const renderMentionSuggestions = (
+    editor: "comment" | "reply" | "edit",
+    commentId: string | undefined,
+    text: string,
+    setText: (value: string) => void,
+  ) => {
+    if (
+      !mentionEntry ||
+      mentionEntry.editor !== editor ||
+      mentionEntry.commentId !== commentId
+    ) {
+      return null;
+    }
+    const candidates = mentionCandidates
+      .filter((candidate) =>
+        candidate.handle.toLowerCase().startsWith(mentionEntry.query.toLowerCase()),
+      )
+      .slice(0, 5);
+    if (!candidates.length) return null;
+
+    return (
+      <div
+        role="listbox"
+        aria-label="Mention a participant"
+        className="flex flex-wrap gap-1 rounded-md border bg-background p-1"
+      >
+        {candidates.map((candidate) => (
+          <button
+            key={candidate.handle}
+            type="button"
+            role="option"
+            aria-selected="false"
+            onClick={() =>
+              selectMention(editor, commentId, text, setText, candidate)
+            }
+            className="rounded px-2 py-1 text-left text-sm hover:bg-muted"
+          >
+            @{candidate.handle}
+            <span className="ml-1 text-xs text-muted-foreground">
+              {candidate.name}
+            </span>
+          </button>
+        ))}
+      </div>
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -271,6 +445,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
         setComments((prev) => [newCommentObj, ...prev]);
       }
       setNewComment("");
+      setMentionEntry(null);
       setCaptchaQuestion("");
       setCaptchaAnswer("");
       setCaptchaFor(null);
@@ -326,6 +501,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
         );
         setEditingCommentId(null);
         setEditText("");
+        setMentionEntry(null);
       }
     } catch (error) {
       console.error("Error updating comment:", error);
@@ -422,6 +598,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
       }));
 
       setReplyText("");
+      setMentionEntry(null);
       setReplyingTo(null);
       setCaptchaQuestion("");
       setCaptchaAnswer("");
@@ -638,6 +815,11 @@ const Comments = ({ videoId }: { videoId: string }) => {
           <option value="mostLiked">Most liked</option>
         </select>
       </div>
+      {preferenceError && (
+        <p role="alert" className="text-sm text-red-500">
+          {preferenceError}
+        </p>
+      )}
 
       {user && (
         <div className="flex min-w-0 gap-3 sm:gap-4">
@@ -649,9 +831,22 @@ const Comments = ({ videoId }: { videoId: string }) => {
             <Textarea
               placeholder="Add a comment..."
               value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
+              onChange={(e) => {
+                setNewComment(e.target.value);
+                updateMentionEntry(
+                  e.target.value,
+                  e.target.selectionStart,
+                  "comment",
+                );
+              }}
               className="min-h-[80px] resize-none border-0 border-b-2 rounded-none focus-visible:ring-0"
             />
+            {renderMentionSuggestions(
+              "comment",
+              undefined,
+              newComment,
+              setNewComment,
+            )}
             {captchaFor === "comment" && (
               <label className="flex items-center gap-2 text-sm">
                 <span>{captchaQuestion}</span>
@@ -672,7 +867,10 @@ const Comments = ({ videoId }: { videoId: string }) => {
             <div className="flex flex-wrap justify-end gap-2">
               <Button
                 variant="ghost"
-                onClick={() => setNewComment("")}
+                onClick={() => {
+                  setNewComment("");
+                  setMentionEntry(null);
+                }}
                 disabled={!newComment.trim()}
               >
                 Cancel
@@ -775,8 +973,22 @@ const Comments = ({ videoId }: { videoId: string }) => {
                   <div className="space-y-2">
                     <Textarea
                       value={editText}
-                      onChange={(e) => setEditText(e.target.value)}
+                      onChange={(e) => {
+                        setEditText(e.target.value);
+                        updateMentionEntry(
+                          e.target.value,
+                          e.target.selectionStart,
+                          "edit",
+                          comment._id,
+                        );
+                      }}
                     />
+                    {renderMentionSuggestions(
+                      "edit",
+                      comment._id,
+                      editText,
+                      setEditText,
+                    )}
                     <div className="flex gap-2 justify-end">
                       <Button
                         onClick={handleUpdateComment}
@@ -789,6 +1001,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                         onClick={() => {
                           setEditingCommentId(null);
                           setEditText("");
+                          setMentionEntry(null);
                         }}
                       >
                         Cancel
@@ -803,7 +1016,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                       </p>
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">
-                        {renderMentions(comment.commentbody, mentionUserIds)}
+                        {renderMentions(comment.commentbody, mentionUsernames)}
                       </p>
                     )}
 
@@ -812,11 +1025,14 @@ const Comments = ({ videoId }: { videoId: string }) => {
                       <select
                         value={sourceLanguage}
                         onChange={(e) =>
-                          setSourceLanguage(e.target.value as LanguageCode)
+                          setSourceLanguage(e.target.value as SourceLanguageCode)
                         }
                         className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground [color-scheme:light] dark:[color-scheme:dark]"
                         aria-label="Original comment language"
                       >
+                        <option value="auto" className="bg-background text-foreground">
+                          Detect automatically
+                        </option>
                         {languages.map((language) => (
                           <option
                             key={language.code}
@@ -829,8 +1045,11 @@ const Comments = ({ videoId }: { videoId: string }) => {
                       </select>
                       <select
                         value={targetLanguage}
+                        disabled={savingLanguagePreference}
                         onChange={(e) =>
-                          setTargetLanguage(e.target.value as LanguageCode)
+                          void handleTargetLanguageChange(
+                            e.target.value as LanguageCode,
+                          )
                         }
                         className="rounded-md border border-input bg-background px-2 py-1 text-sm text-foreground [color-scheme:light] dark:[color-scheme:dark]"
                         aria-label="Choose translation language"
@@ -862,7 +1081,6 @@ const Comments = ({ videoId }: { videoId: string }) => {
                           : "Translate"}
                       </Button>
                     </div>}
-
                     {/* Show translated text */}
                     {!comment.isDeleted && translations[
                       JSON.stringify([
@@ -962,6 +1180,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
 
                           setReplyingTo(isClosing ? null : comment._id);
                           setReplyText("");
+                          setMentionEntry(null);
 
                           if (!isClosing && !replies[comment._id]) {
                             void loadReplies(comment._id);
@@ -1098,9 +1317,23 @@ const Comments = ({ videoId }: { videoId: string }) => {
                         <Textarea
                           placeholder="Write a reply..."
                           value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
+                          onChange={(e) => {
+                            setReplyText(e.target.value);
+                            updateMentionEntry(
+                              e.target.value,
+                              e.target.selectionStart,
+                              "reply",
+                              comment._id,
+                            );
+                          }}
                           rows={2}
                         />
+                        {renderMentionSuggestions(
+                          "reply",
+                          comment._id,
+                          replyText,
+                          setReplyText,
+                        )}
                         {captchaFor === "reply" && (
                           <label className="flex items-center gap-2 text-sm">
                             <span>{captchaQuestion}</span>
@@ -1134,6 +1367,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                             onClick={() => {
                               setReplyingTo(null);
                               setReplyText("");
+                              setMentionEntry(null);
                             }}
                           >
                             Cancel
@@ -1214,7 +1448,7 @@ const Comments = ({ videoId }: { videoId: string }) => {
                           </div>
 
                           <p className="mt-1 whitespace-pre-wrap">
-                            {renderMentions(reply.replybody, mentionUserIds)}
+                            {renderMentions(reply.replybody, mentionUsernames)}
                           </p>
 
                           {reply.createdAt && (

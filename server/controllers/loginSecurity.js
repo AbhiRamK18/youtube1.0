@@ -151,11 +151,20 @@ export const beginLogin = async (req, res) => {
         name: decoded.name || "",
         image: decoded.picture || "",
         themePreference: defaultTheme(),
+        themePreferenceSource: "automatic",
       });
     } else {
       user.name = decoded.name || user.name;
       user.image = decoded.picture || user.image;
-      if (!user.themePreference) user.themePreference = defaultTheme();
+      if (
+        user.themePreferenceSource === "manual" ||
+        (!user.themePreferenceSource && user.themePreference)
+      ) {
+        user.themePreferenceSource = "manual";
+      } else {
+        user.themePreference = defaultTheme();
+        user.themePreferenceSource = "automatic";
+      }
       await user.save();
     }
 

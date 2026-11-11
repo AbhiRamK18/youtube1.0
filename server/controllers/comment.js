@@ -4,6 +4,13 @@ import commentVote from "../Modals/commentvote.js";
 import reply from "../Modals/reply.js";
 import { filterCommentText } from "../middleware/commentFilter.js";
 
+const normalizeDuplicateText = (text) =>
+  text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
 export const postcomment = async (req, res) => {
   const { commentbody, videoid } = req.body;
   const userid = req.authenticatedUser._id;
@@ -30,18 +37,13 @@ export const postcomment = async (req, res) => {
       createdAt: { $gte: cutoffTime },
     }).select("commentbody");
 
-    const normalizedNewComment = validation.text
-      .toLowerCase()
-      .replace(/\s+/g, " ")
-      .trim();
+    const normalizedNewComment = normalizeDuplicateText(validation.text);
 
     const isDuplicate = recentComments.some((existingComment) => {
-      const normalizedExistingComment = (existingComment.commentbody || "")
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .trim();
-
-      return normalizedExistingComment === normalizedNewComment;
+      return (
+        normalizeDuplicateText(existingComment.commentbody || "") ===
+        normalizedNewComment
+      );
     });
 
     if (isDuplicate) {
@@ -392,6 +394,22 @@ if (!validation.valid) {
       return res.status(410).json({ message: "Cannot reply to a deleted comment" });
     }
 
+    const recentReplies = await reply.find({
+      commentid,
+      userid,
+      createdAt: { $gte: new Date(Date.now() - 60 * 1000) },
+    }).select("replybody");
+    const normalizedReply = normalizeDuplicateText(validation.text);
+    if (
+      recentReplies.some(
+        (item) => normalizeDuplicateText(item.replybody) === normalizedReply,
+      )
+    ) {
+      return res.status(409).json({
+        message: "You already posted this reply recently. Please wait before posting it again.",
+      });
+    }
+
     const newReply = await reply.create({
       commentid,
       userid,
@@ -507,7 +525,7 @@ export const translateComment = async (req, res) => {
   }
 
   if (
-    !supportedLanguages.includes(sourceLang) ||
+    (sourceLang !== "auto" && !supportedLanguages.includes(sourceLang)) ||
     !supportedLanguages.includes(targetLang) ||
     sourceLang === targetLang
   ) {
@@ -517,51 +535,53 @@ export const translateComment = async (req, res) => {
   }
 
   try {
-    const params = new URLSearchParams({
-      q: text.trim(),
-      langpair: `${sourceLang}|${targetLang}`,
-    });
-    const contactEmail = process.env.MYMEMORY_EMAIL?.trim();
-    if (contactEmail) {
-      params.set("de", contactEmail);
-    }
-
-    try {
-      const response = await fetchTranslation(
-        `https://api.mymemory.translated.net/get?${params.toString()}`,
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-
-        if (
-          data.responseStatus === 200 &&
-          typeof data.responseData?.translatedText === "string" &&
-          data.responseData.translatedText.trim()
-        ) {
-          return res.status(200).json({
-            originalText: text,
-            translatedText: data.responseData.translatedText,
-            sourceLang,
-            targetLang,
-          });
-        }
-
-        console.error("MyMemory response:", {
-          status: data.responseStatus,
-          quotaFinished: data.quotaFinished,
-          details: data.responseDetails,
-        });
-      } else {
-        console.error("MyMemory HTTP status:", response.status);
+    if (sourceLang !== "auto") {
+      const params = new URLSearchParams({
+        q: text.trim(),
+        langpair: `${sourceLang}|${targetLang}`,
+      });
+      const contactEmail = process.env.MYMEMORY_EMAIL?.trim();
+      if (contactEmail) {
+        params.set("de", contactEmail);
       }
-    } catch (primaryError) {
-      console.error("MyMemory translation error:", primaryError);
+
+      try {
+        const response = await fetchTranslation(
+          `https://api.mymemory.translated.net/get?${params.toString()}`,
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+
+          if (
+            data.responseStatus === 200 &&
+            typeof data.responseData?.translatedText === "string" &&
+            data.responseData.translatedText.trim()
+          ) {
+            return res.status(200).json({
+              originalText: text,
+              translatedText: data.responseData.translatedText,
+              sourceLang,
+              targetLang,
+            });
+          }
+
+          console.error("MyMemory response:", {
+            status: data.responseStatus,
+            quotaFinished: data.quotaFinished,
+            details: data.responseDetails,
+          });
+        } else {
+          console.error("MyMemory HTTP status:", response.status);
+        }
+      } catch (primaryError) {
+        console.error("MyMemory translation error:", primaryError);
+      }
     }
 
     const fallbackParams = new URLSearchParams({
       client: "gtx",
-      sl: sourceLang,
+      sl: sourceLang === "auto" ? "auto" : sourceLang,
       tl: targetLang,
       dt: "t",
       q: text.trim(),

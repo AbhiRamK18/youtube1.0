@@ -47,6 +47,8 @@ const videoDownloadSchema = new mongoose.Schema(
     activeAttemptId: { type: mongoose.Schema.Types.ObjectId, default: null },
     ticketHash: { type: String, default: "", select: false },
     ticketExpiresAt: { type: Date, default: null, select: false },
+    quotaDayKey: { type: String, default: "" },
+    quotaMonthKey: { type: String, default: "" },
     attempts: { type: [downloadAttemptSchema], default: [] },
   },
   { timestamps: true },

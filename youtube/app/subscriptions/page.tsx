@@ -24,6 +24,8 @@ type Plan = {
 type Payment = {
   _id: string;
   orderId: string;
+  paymentId?: string;
+  currency?: string;
   status: string;
   plan: string;
   period: string;
@@ -32,6 +34,10 @@ type Payment = {
 };
 
 type ActiveSubscription = {
+  _id: string;
+  plan: string;
+  status: string;
+  startsAt: string;
   expiresAt: string;
 };
 
@@ -41,6 +47,7 @@ type SubscriptionDashboard = {
     name: string;
     subscription: ActiveSubscription | null;
   };
+  subscriptions: ActiveSubscription[];
   billingHistory: Payment[];
 };
 
@@ -71,6 +78,7 @@ export default function SubscriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [plansError, setPlansError] = useState("");
   const [busyPlan, setBusyPlan] = useState("");
+  const [busySubscription, setBusySubscription] = useState("");
   const reconciledOrders = useRef(new Set<string>());
 
   const loadDashboard = useCallback(async () => {
@@ -172,7 +180,7 @@ export default function SubscriptionsPage() {
         handler: async (payment: Record<string, string>) => {
           paymentSubmitted = true;
           try {
-            await axiosInstance.post(
+            const verification = await axiosInstance.post(
               "/subscription/verify",
               {
                 orderId: payment.razorpay_order_id,
@@ -181,7 +189,14 @@ export default function SubscriptionsPage() {
               },
               config,
             );
-            toast.success("Subscription activated.");
+            const startsAt = verification.data.subscription?.startsAt;
+            if (startsAt && new Date(startsAt).getTime() > Date.now()) {
+              toast.success(
+                `${plan.name} is scheduled to start ${new Date(startsAt).toLocaleDateString()}.`,
+              );
+            } else {
+              toast.success("Subscription activated.");
+            }
             await loadDashboard();
           } catch (error) {
             console.error("Payment verification failed:", error);
@@ -224,8 +239,39 @@ export default function SubscriptionsPage() {
     }
   };
 
+  const handleCancelSubscription = async (subscription: ActiveSubscription) => {
+    const isScheduled = new Date(subscription.startsAt).getTime() > Date.now();
+    const message = isScheduled
+      ? "Cancel this paid subscription scheduled for a future date?"
+      : "Cancel this subscription at the end of its current validity period?";
+    if (!window.confirm(message)) return;
+
+    setBusySubscription(subscription._id);
+    try {
+      const config = await getFirebaseAuthConfig();
+      const response = await axiosInstance.post(
+        `/subscription/${encodeURIComponent(subscription._id)}/cancel`,
+        {},
+        config,
+      );
+      toast.success(response.data.message);
+      await loadDashboard();
+    } catch (error) {
+      console.error("Could not cancel subscription:", error);
+      toast.error("Unable to cancel this subscription. Please retry.");
+    } finally {
+      setBusySubscription("");
+    }
+  };
+
   const activeSubscription = dashboard?.currentPlan?.subscription;
   const currentPlanId = dashboard?.currentPlan?.id || "free";
+  const planRanks: Record<string, number> = {
+    free: 0,
+    bronze: 1,
+    silver: 2,
+    gold: 3,
+  };
 
   return (
     <main className="min-w-0 flex-1 space-y-6 p-3 sm:p-6">
@@ -245,7 +291,13 @@ export default function SubscriptionsPage() {
             <p className="text-sm">
               Current plan: <strong>{dashboard?.currentPlan?.name || (loading ? "Loading…" : "Free")}</strong>
               {activeSubscription && (
-                <> · Valid until {new Date(activeSubscription.expiresAt).toLocaleDateString()}</>
+                <>
+                  {" · "}
+                  {activeSubscription.status === "cancelled"
+                    ? "Access until "
+                    : "Valid until "}
+                  {new Date(activeSubscription.expiresAt).toLocaleDateString()}
+                </>
               )}
             </p>
             <Link className="text-sm text-primary underline" href="/downloads">
@@ -253,7 +305,60 @@ export default function SubscriptionsPage() {
             </Link>
           </div>
         )}
+        {user && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Renewals are manual. A purchase made during a paid period starts at its expiry; a higher-tier upgrade takes effect after payment verification. There are no prorated refunds.
+          </p>
+        )}
+        {user && activeSubscription?.status === "active" && (
+          <button
+            type="button"
+            disabled={busySubscription === activeSubscription._id}
+            onClick={() => void handleCancelSubscription(activeSubscription)}
+            className="mt-3 rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+          >
+            {busySubscription === activeSubscription._id
+              ? "Cancelling…"
+              : "Cancel at expiry"}
+          </button>
+        )}
+        {user && activeSubscription?.status === "cancelled" && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            This membership is set to end at its expiry date.
+          </p>
+        )}
       </section>
+
+      {user && dashboard?.subscriptions?.some((subscription) =>
+        subscription.status === "scheduled",
+      ) && (
+        <section className="space-y-2 rounded-lg border bg-card p-4">
+          <h2 className="font-semibold">Scheduled memberships</h2>
+          {dashboard.subscriptions
+            .filter((subscription) => subscription.status === "scheduled")
+            .map((subscription) => (
+              <div
+                key={subscription._id}
+                className="flex flex-wrap items-center justify-between gap-3 text-sm"
+              >
+                <span>
+                  {subscription.plan || "Membership"} · Starts{" "}
+                  {new Date(subscription.startsAt).toLocaleDateString()}
+                </span>
+                <button
+                  type="button"
+                  disabled={busySubscription === subscription._id}
+                  onClick={() => void handleCancelSubscription(subscription)}
+                  className="rounded-md border px-3 py-2 disabled:opacity-50"
+                >
+                  {busySubscription === subscription._id
+                    ? "Cancelling…"
+                    : "Cancel scheduled plan"}
+                </button>
+              </div>
+            ))}
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center gap-2" aria-label="Billing period">
         {periods.map((value) => (
@@ -294,11 +399,19 @@ export default function SubscriptionsPage() {
               </ul>
               <button
                 type="button"
-                disabled={plan.id === "free" || plan.id === currentPlanId || busyPlan !== ""}
+                disabled={plan.id === "free" || busyPlan !== ""}
                 onClick={() => void handlePurchase(plan)}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {plan.id === currentPlanId ? "Current plan" : plan.id === "free" ? "Included" : busyPlan === plan.id ? "Starting checkout…" : "Choose plan"}
+                {plan.id === "free"
+                  ? "Included"
+                  : busyPlan === plan.id
+                    ? "Starting checkout…"
+                    : plan.id === currentPlanId
+                      ? "Renew after expiry"
+                      : planRanks[plan.id] > planRanks[currentPlanId]
+                        ? "Upgrade now"
+                        : "Change at expiry"}
               </button>
             </article>
           ))}
@@ -313,9 +426,19 @@ export default function SubscriptionsPage() {
           ) : (
             <div className="mt-3 divide-y">
               {dashboard.billingHistory.map((payment) => (
-                <div key={payment._id} className="flex flex-wrap justify-between gap-2 py-3 text-sm">
-                  <span>{payment.plan} · {payment.period} · {money(payment.amountPaise)}</span>
-                  <span className="capitalize">{payment.status} · {payment.invoiceNumber || payment.orderId}</span>
+                <div key={payment._id} className="space-y-1 py-3 text-sm">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <span>{payment.plan} · {payment.period} · {money(payment.amountPaise)}</span>
+                    <span className="capitalize">{payment.status}</span>
+                  </div>
+                  <p className="break-all text-xs text-muted-foreground">
+                    Invoice: {payment.invoiceNumber || "Pending"} · Order: {payment.orderId}
+                  </p>
+                  {payment.paymentId && (
+                    <p className="break-all text-xs text-muted-foreground">
+                      Payment: {payment.paymentId}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

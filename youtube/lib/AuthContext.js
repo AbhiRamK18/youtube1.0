@@ -27,7 +27,8 @@ import axiosInstance from "./axiosinstance";
  *   channelname?: string,
  *   username?: string,
  *   location?: string,
- *   themePreference?: "light" | "dark"
+ *   themePreference?: "light" | "dark",
+ *   preferredCommentLanguage?: "en" | "te" | "hi" | "ta" | "kn" | "ml"
  * }} AppUser
  */
 
