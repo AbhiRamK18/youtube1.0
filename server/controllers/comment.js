@@ -521,6 +521,10 @@ export const translateComment = async (req, res) => {
       q: text.trim(),
       langpair: `${sourceLang}|${targetLang}`,
     });
+    const contactEmail = process.env.MYMEMORY_EMAIL?.trim();
+    if (contactEmail) {
+      params.set("de", contactEmail);
+    }
 
     try {
       const response = await fetchTranslation(
@@ -543,7 +547,11 @@ export const translateComment = async (req, res) => {
           });
         }
 
-        console.error("MyMemory response:", data.responseDetails);
+        console.error("MyMemory response:", {
+          status: data.responseStatus,
+          quotaFinished: data.quotaFinished,
+          details: data.responseDetails,
+        });
       } else {
         console.error("MyMemory HTTP status:", response.status);
       }
